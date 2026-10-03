@@ -1,0 +1,80 @@
+---
+title: "Command Connectors: Bridging Commands to the World"
+sidebarTitle: "Overview"
+description: "Command connectors expose your Foobara commands over HTTP, CLI, MCP, async queues, and more — with zero integration boilerplate required."
+---
+
+Command connectors are the bridge between your domain commands and the outside world. Because every Foobara command carries machine-readable metadata describing its inputs, outputs, and possible errors, a connector can automatically handle serialization, routing, help text, and discoverability without any extra code from you. You write the domain logic once inside a command; connectors make it available everywhere.
+
+## How the `connect` method works
+
+Every connector exposes a `connect` method that accepts a **command class**, a **domain module**, or an **organization module**. When you pass a domain or organization, all non-abstract commands inside it are registered automatically.
+
+```ruby
+# Connect a single command
+command_connector.connect(CreateCapybara)
+
+# Connect an entire domain (all commands in the domain)
+command_connector.connect(FoobaraDemo::CapyCafe)
+
+# Connect an entire organization (all commands in all its domains)
+command_connector.connect(FoobaraDemo)
+```
+
+Passing a domain or organization is a convenient shortcut — the connector iterates over every command it finds and registers each one individually. This means you never have to update the connector when you add a new command to a domain; it just appears automatically.
+
+## Built-in commands
+
+Every connector automatically exposes four built-in commands that require no configuration. These built-in endpoints are available on all connector types and are what power discoverability tooling.
+
+| Command | Purpose |
+|---|---|
+| `list_commands` | Returns a list of every command exposed by this connector, with optional descriptions |
+| `describe` | Returns the full manifest (inputs, result type, errors) for a command or type |
+| `ping` | Returns the current server time — useful for health checks |
+| `query_git_commit_info` | Returns git commit metadata about the running deployment |
+
+On the HTTP connector these map to URLs like `/help`, `/help/CommandName`, and `/manifest`. On the CLI connector they map to subcommands like `help` and `help CommandName`.
+
+## Authentication and access control
+
+Connectors support an `allowed` / `authenticator` mechanism that lets you restrict which requests can run which commands. You can attach an authenticator at the connector level or per command, and register named "allowed rules" that are evaluated at request time.
+
+```ruby
+command_connector = Foobara::CommandConnectors::Http::Rack.new(
+  authenticator: MyAuthenticator,
+  requires_allowed_rule: true
+)
+
+# Connect a command and declare who is allowed to run it
+command_connector.connect(DeleteCapybara, allowed_rule: :admin)
+```
+
+When `requires_allowed_rule: true` is set, every connected command must have an explicit `allowed_rule` or the connector will raise at connect time, preventing accidental exposure of sensitive commands.
+
+## Available connectors
+
+<CardGroup cols={2}>
+  <Card title="HTTP — Rack" icon="server" href="/connectors/http">
+    Expose commands as a Rack application. Works with Puma, Unicorn, or any Rack-compatible server. Gem: `foobara-rack-connector`
+  </Card>
+  <Card title="HTTP — Rails" icon="train" href="/connectors/http">
+    Mount commands directly inside a Rails router with a clean routes DSL. Gem: `foobara-rails-command-connector`
+  </Card>
+  <Card title="CLI" icon="terminal" href="/connectors/cli">
+    Expose commands as a shell script with auto-generated help text and `--flag` style inputs. Gem: `foobara-sh-cli-connector`
+  </Card>
+  <Card title="MCP" icon="robot" href="/connectors/mcp">
+    Expose commands as an MCP stdio server that AI assistants like Claude Code can call directly. Gem: `foobara-mcp-connector`
+  </Card>
+  <Card title="Async — Resque" icon="clock" href="/connectors/async-and-scheduler">
+    Automatically creates an async variant of any command that runs through a Resque job queue. Gem: `foobara-resque-connector`
+  </Card>
+  <Card title="Scheduler — Resque" icon="calendar" href="/connectors/async-and-scheduler">
+    Schedule commands to run on a cron expression using resque-scheduler. Gem: `foobara-resque-scheduler-connector`
+  </Card>
+</CardGroup>
+
+<Note>
+  Because command metadata is formal and machine-readable, you can also use connectors as the foundation for remote commands, TypeScript SDK generation, and React form generation. See the [Remote Commands](/advanced/remote-commands) guide for details.
+</Note>

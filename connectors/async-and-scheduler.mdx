@@ -1,0 +1,181 @@
+---
+title: "Async and Scheduler Command Connectors with Resque"
+sidebarTitle: "Async & Scheduler"
+description: "Run Foobara commands as Resque background jobs or on a recurring cron schedule — no Resque job class code required, just connect and go."
+---
+
+Foobara's async and scheduler connectors let you push commands onto background queues or run them on a schedule without writing a single Resque job class. The connectors generate the job wiring automatically from each command's existing metadata. Your domain logic stays in commands, where it belongs.
+
+<Note>
+  Because the connectors generate job code from command metadata, there is no custom Resque job code to maintain. You cannot accidentally place domain logic inside job code because there is no job code to put it in.
+</Note>
+
+<Tabs>
+  <Tab title="Async (Resque)">
+    ## Async connector
+
+    The Resque connector creates an **async variant** of every command you connect to it. The async variant has the same inputs as the original, but instead of running the command immediately it enqueues a Resque job and returns `true`.
+
+    **Install the gem:**
+
+    ```bash
+    gem install foobara-resque-connector
+    ```
+
+    ### Setup
+
+    ```ruby
+    require "foobara/resque_connector"
+
+    async_connector = Foobara::CommandConnectors::ResqueConnector.new
+
+    async_connector.connect(IncrementAge)
+    ```
+
+    Connecting `IncrementAge` to the Resque connector creates a new command called `IncrementAgeAsync`. You can then connect that async command to any other connector — for example, a CLI connector — so it is accessible from the outside world.
+
+    ### Combining with the CLI connector
+
+    ```ruby
+    require "foobara/resque_connector"
+
+    async_connector = Foobara::CommandConnectors::ResqueConnector.new
+    async_connector.connect(IncrementAge)
+
+    require "foobara/sh_cli_connector"
+
+    cli_connector = Foobara::CommandConnectors::ShCliConnector.new
+    cli_connector.connect(IncrementAge)
+    cli_connector.connect(IncrementAgeAsync)
+    cli_connector.connect(FindCapybara)
+
+    cli_connector.run(ARGV)
+    ```
+
+    ### Running the async connector in action
+
+    Enqueue a job by calling the async variant:
+
+    ```
+    $ ./capy-cafe FindCapybara --id 1 | grep age
+    age: 100
+
+    $ ./capy-cafe IncrementAgeAsync --capybara 1
+    true
+
+    $ ./capy-cafe FindCapybara --id 1 | grep age
+    age: 100
+    ```
+
+    Notice the age hasn't changed yet — the job is queued but no worker has processed it.
+
+    ### Running a Resque worker
+
+    In a real project, start workers with:
+
+    ```bash
+    rake resque:work
+    ```
+
+    Once the worker runs, the job is processed:
+
+    ```
+    *** got: (Job{general} | Foobara::CommandConnectors::ResqueConnector::CommandJob | [{"command_name"=>"IncrementAge", "inputs"=>{"capybara"=>"1"}}])
+    *** done: (Job{general} | Foobara::CommandConnectors::ResqueConnector::CommandJob | [{"command_name"=>"IncrementAge", "inputs"=>{"capybara"=>"1"}}])
+    ```
+
+    Now check the age again:
+
+    ```
+    $ ./capy-cafe FindCapybara --id 1 | grep age
+    age: 101
+    ```
+
+    Fumiko's age has been incremented asynchronously.
+  </Tab>
+
+  <Tab title="Scheduler (resque-scheduler)">
+    ## Scheduler connector
+
+    The resque-scheduler connector lets you schedule commands to run on a cron expression. It builds on top of the Resque connector — you get the same automatic job wiring, extended with the ability to register recurring jobs.
+
+    **Install the gem:**
+
+    ```bash
+    gem install foobara-resque-scheduler-connector
+    ```
+
+    ### Setup
+
+    ```ruby
+    require "foobara/resque_scheduler_connector"
+
+    cron_connector = Foobara::CommandConnectors::ResqueSchedulerConnector.new
+
+    cron_connector.cron(
+      [
+        #   ╭─Second (0-59)
+        #   │ ╭─Minute (0-59)
+        #   │ │ ╭─Hour (0-23)
+        #   │ │ │ ╭─Day-of-Month (1-31)
+        #   │ │ │ │ ╭─Month (1-12)
+        #   │ │ │ │ │ ╭─Day-of-Week (0-6)
+        #   │ │ │ │ │ │ ╭─Timezone
+        #   │ │ │ │ │ │ │   ╭─Command,      ╭─Inputs
+        ["*/5 * * * * *  ", IncrementAge, { capybara: 1 }]
+      ]
+    )
+    ```
+
+    The `cron` method accepts an array of tuples. Each tuple contains:
+
+    1. A cron expression string (six fields: second, minute, hour, day-of-month, month, day-of-week, plus optional timezone)
+    2. The command class to run
+    3. A hash of inputs to pass to the command
+
+    The example above runs `IncrementAge` with `capybara: 1` every 5 seconds.
+
+    ### Scheduler output
+
+    When you start the combined worker and scheduler process, you see the scheduler initialize and then fire jobs at the configured interval:
+
+    ```
+    resque-scheduler: [INFO] 2024-12-12T14:47:41-08:00: Starting
+    resque-scheduler: [DEBUG] 2024-12-12T14:47:41-08:00: Setting procline "resque-scheduler-4.10.2: Starting"
+    resque-scheduler: [DEBUG] 2024-12-12T14:47:41-08:00: Setting procline "resque-scheduler-4.10.2: Schedules Loaded"
+    ```
+
+    Every 5 seconds the scheduler queues the job and the worker picks it up:
+
+    ```
+    resque-scheduler: [INFO] 2024-12-12T14:47:45-08:00: queueing Foobara::CommandConnectors::ResqueConnector::CommandJob (IncrementAge)
+    *** got: (Job{general} | Foobara::CommandConnectors::ResqueConnector::CommandJob | [{"command_name"=>"IncrementAge", "inputs"=>{"capybara"=>1}}])
+    *** done: (Job{general} | Foobara::CommandConnectors::ResqueConnector::CommandJob | [{"command_name"=>"IncrementAge", "inputs"=>{"capybara"=>1}}])
+    ```
+  </Tab>
+</Tabs>
+
+## Connecting a one-off async command to a scheduler
+
+You can also connect a command to the Resque connector to get an `IncrementAgeAsyncAt` variant — a command that accepts a `Time` argument specifying when the job should run. This gives you ad-hoc deferred execution in addition to the cron schedule.
+
+## Architecture: why this design matters
+
+<CardGroup cols={2}>
+  <Card title="No job code to maintain" icon="trash">
+    The connector generates Resque job wiring from command metadata. There is no `PerformJob` class, no argument serialization to write, and nothing to keep in sync with the command signature.
+  </Card>
+  <Card title="Domain logic stays in commands" icon="shield">
+    Because there is no job class, it is structurally impossible to accidentally put domain logic in the job. The worker just finds the command by name and runs it with the stored inputs.
+  </Card>
+  <Card title="Same interface everywhere" icon="arrows-repeat">
+    `IncrementAgeAsync` has the same input schema as `IncrementAge`. Any connector — HTTP, CLI, MCP — can expose both variants without any extra configuration.
+  </Card>
+  <Card title="Discoverability preserved" icon="magnifying-glass">
+    Async variants appear in `/manifest`, `list_commands`, and CLI help output just like any other command. Tooling that consumes the manifest automatically discovers them.
+  </Card>
+</CardGroup>
+
+<Warning>
+  The Resque connector requires Redis. Make sure Redis is running and `ENV["REDIS_URL"]` or your Resque configuration points to it before starting workers.
+</Warning>

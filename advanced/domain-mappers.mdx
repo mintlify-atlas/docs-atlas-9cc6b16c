@@ -1,0 +1,237 @@
+---
+title: "Domain Mappers: Translating Between Domain Concepts"
+sidebarTitle: "Domain Mappers"
+description: "Use Foobara DomainMapper to translate values between domains, keeping each command free of foreign mental models and cross-domain coupling."
+---
+
+When one domain needs to work with data that originates in another domain, there is a temptation to sprinkle translation logic directly inside commands. Domain mappers exist to prevent that. A `Foobara::DomainMapper` is a first-class object that knows how to translate a value from one domain concept to another — decoupling the consuming command from any awareness of the source domain's shape. The result is commands whose code reflects only their own domain's mental model, with the mapping concern isolated in a dedicated, discoverable, testable class.
+
+## Why Domain Mappers Matter
+
+Consider a `CapyCafe` domain that manages capybara records, and an `AnimalHouse` domain that has a general `Animal` model. If `CapyCafe::ImportAnimal` directly reads `animal.first_name`, `animal.last_name`, and `animal.birthday`, it is now coupled to `AnimalHouse`'s vocabulary. Domain mappers remove that coupling: the `ImportAnimal` command calls `#run_mapped_subcommand!` and never touches the `Animal` internals at all.
+
+## Defining a Domain Mapper
+
+A domain mapper inherits from `Foobara::DomainMapper`. Use the `.from` and `.to` class methods to declare the source type and the target (which can be a command class, in which case the mapper produces the command's inputs), then implement `#map` to return the translated value:
+
+```ruby
+module FoobaraDemo
+  module CapyCafe
+    module DomainMappers
+      class MapAnimalToCapybara < Foobara::DomainMapper
+        from AnimalHouse::Animal
+        to CreateCapybara   # maps to the *inputs* of CreateCapybara
+
+        def map
+          {
+            name: "#{first_name} #{last_name}",
+            age:  birthday_to_age
+          }
+        end
+
+        alias animal from  # friendly accessor for the source object
+
+        def first_name = animal.first_name
+        def last_name  = animal.last_name
+        def birthday   = animal.birthday
+
+        def birthday_to_age
+          today = Date.today
+          age   = today.year - birthday.year
+          birthday_this_year = Date.new(birthday.year + age, birthday.month, birthday.day)
+          today < birthday_this_year ? age - 1 : age
+        end
+      end
+    end
+  end
+end
+```
+
+<Note>
+  When `.to` receives a command class, the mapper's `result_type` is automatically set to that command's `inputs_type`. This is the most common pattern: map a source object to the exact inputs required by a downstream command.
+</Note>
+
+## Declaring Domain Dependencies
+
+A domain that uses types or mappers from another domain must declare the dependency using `foobara_depends_on`:
+
+```ruby
+module FoobaraDemo
+  module CapyCafe
+    foobara_domain!
+
+    foobara_depends_on AnimalHouse  # required when referencing AnimalHouse types
+  end
+end
+```
+
+This keeps cross-domain relationships explicit and enforces a unidirectional dependency graph.
+
+## Using a Mapper Directly
+
+You can invoke a domain mapper in isolation with `.map!`. This is useful for testing or for one-off data transformations in scripts:
+
+```ruby
+create_capybara_inputs = FoobaraDemo::CapyCafe::DomainMappers::MapAnimalToCapybara.map!(
+  species:    :capybara,
+  first_name: "Barbara",
+  last_name:  "Doe",
+  birthday:   "1000-01-01"
+)
+# => { name: "Barbara Doe", age: 1024 }
+
+barbara = FoobaraDemo::CapyCafe::CreateCapybara.run!(create_capybara_inputs)
+barbara.age
+# => 1024
+```
+
+## Using a Mapper Inside a Command
+
+The idiomatic use is inside a command via `#run_mapped_subcommand!`. This method automatically locates the domain mapper that translates the source object to the target command's inputs, runs it as a subcommand, and then runs the target command with the mapped result:
+
+```ruby
+module FoobaraDemo
+  module CapyCafe
+    class ImportAnimal < Foobara::Command
+      class NotACapybara < Foobara::DataError
+        context species: :symbol, animal: AnimalHouse::Animal
+
+        def message
+          "Can only import a capybara not a #{species}"
+        end
+      end
+
+      inputs animal: AnimalHouse::Animal
+      result  Capybara
+
+      possible_input_error :animal, NotACapybara
+
+      # Declare both the target command and the domain mapper as dependencies
+      depends_on CreateCapybara, DomainMappers::MapAnimalToCapybara
+
+      def execute
+        create_capybara
+
+        capybara
+      end
+
+      attr_accessor :capybara
+
+      def create_capybara
+        # Automatically maps `animal` (AnimalHouse::Animal) to CreateCapybara's inputs
+        self.capybara = run_mapped_subcommand!(CreateCapybara, animal)
+      end
+    end
+  end
+end
+```
+
+The `NotACapybara` error is defined on the domain mapper side — the command itself has no idea what logic validates the species. This pattern scales well when validation rules live in the source domain.
+
+## Error Context in Domain Mapper Errors
+
+When `run_mapped_subcommand!` triggers an error inside the mapper, the error is wrapped with a runtime path that identifies the mapper as its source. This means `possible_errors` on the parent command includes mapper errors, and external tooling can discover them:
+
+```ruby
+FoobaraDemo::CapyCafe::ImportAnimal.possible_errors
+  .map(&:key).map(&:to_s).grep(/not_a/)
+# => ["foobara_demo::capy_cafe::domain_mappers::map_animal_to_capybara>runtime.not_a_capybara"]
+```
+
+This is significant: it means that generated clients, remote importers, and documentation tools all know about mapper errors without any additional declaration.
+
+## Full End-to-End Example
+
+<Steps>
+  <Step title="Define the source domain and model">
+    ```ruby
+    module FoobaraDemo
+      module AnimalHouse
+        foobara_domain!
+
+        class Animal < Foobara::Model
+          attributes do
+            first_name :string
+            last_name  :string
+            birthday   :date
+            species    :symbol, one_of: %i[capybara cat tartigrade]
+          end
+        end
+      end
+    end
+    ```
+  </Step>
+
+  <Step title="Create the domain mapper">
+    ```ruby
+    module FoobaraDemo
+      module CapyCafe
+        foobara_depends_on AnimalHouse
+
+        module DomainMappers
+          class MapAnimalToCapybara < Foobara::DomainMapper
+            from AnimalHouse::Animal
+            to   CreateCapybara
+
+            def map
+              {
+                name: "#{first_name} #{last_name}",
+                age:  birthday_to_age
+              }
+            end
+
+            alias animal from
+            def first_name = animal.first_name
+            def last_name  = animal.last_name
+            def birthday   = animal.birthday
+
+            def birthday_to_age
+              today = Date.today
+              age   = today.year - birthday.year
+              birthday_this_year = Date.new(birthday.year + age, birthday.month, birthday.day)
+              today < birthday_this_year ? age - 1 : age
+            end
+          end
+        end
+      end
+    end
+    ```
+  </Step>
+
+  <Step title="Use the mapper in a command">
+    ```ruby
+    basil = FoobaraDemo::CapyCafe::ImportAnimal.run!(
+      animal: {
+        species:    :capybara,
+        first_name: "Basil",
+        last_name:  "Doe",
+        birthday:   "1000-01-01"
+      }
+    )
+    # => <Capybara:3>
+
+    basil.age   # => 1024
+    basil.name  # => "Basil Doe"
+    ```
+  </Step>
+
+  <Step title="Trigger a mapper error">
+    ```ruby
+    outcome = FoobaraDemo::CapyCafe::ImportAnimal.run(
+      animal: {
+        species:    :tartigrade,
+        first_name: "Tara",
+        last_name:  "Tigrade",
+        birthday:   "1000-01-01"
+      }
+    )
+
+    outcome.errors_sentence
+    # => "Can only import a capybara not a tartigrade"
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  Domain mappers are themselves discoverable through the manifest. The `foob` CLI's `domain-mapper` generator can scaffold a new mapper file with the correct file path and boilerplate for your project structure.
+</Tip>

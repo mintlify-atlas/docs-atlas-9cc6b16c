@@ -1,0 +1,141 @@
+---
+title: "CLI Connector: Shell-Script Interface for Commands"
+sidebarTitle: "CLI"
+description: "Expose Foobara commands as a shell script with auto-generated help text, per-command usage guides, and --flag style input passing."
+---
+
+The CLI connector turns your commands into a fully-featured shell script with no manual argument parsing. Every connected command gets a `--flag` for each of its inputs, auto-generated usage text, and a `help` subcommand — all derived from the same metadata that powers every other Foobara connector.
+
+## Installation
+
+```bash
+gem install foobara-sh-cli-connector
+```
+
+## Setup
+
+Require the connector, instantiate `ShCliConnector`, connect your commands, then call `.run(ARGV)` at the bottom of the script. The connector takes over from there.
+
+```ruby
+require "foobara/sh_cli_connector"
+
+command_connector = Foobara::CommandConnectors::ShCliConnector.new
+
+command_connector.connect(CreateCapybara)
+command_connector.connect(IncrementAge)
+command_connector.connect(FindCapybara)
+
+command_connector.run(ARGV)
+```
+
+Make the script executable and give it a meaningful name:
+
+```bash
+chmod u+x capy-cafe
+```
+
+## Auto-generated help
+
+Running the script with no arguments prints a list of all connected commands along with their descriptions:
+
+```
+$ ./capy-cafe
+Usage: capy-cafe [GLOBAL_OPTIONS] [ACTION] [COMMAND_OR_TYPE] [COMMAND_INPUTS]
+
+Available commands:
+
+  CreateCapybara   Just creates a capybara!
+  IncrementAge     A trip around the sun!
+  FindCapybara     Just tell us who you want to find!
+```
+
+The descriptions come from the `description` call inside each command class, so keeping them up to date in the domain automatically keeps the CLI help accurate.
+
+## Per-command help
+
+Pass `help CommandName` to see the inputs for a specific command:
+
+```
+$ ./capy-cafe help FindCapybara
+Usage: capy-cafe [GLOBAL_OPTIONS] FindCapybara [COMMAND_INPUTS]
+
+Just tell us who you want to find!
+
+Command inputs:
+
+ -i, --id ID                      Required
+```
+
+```
+$ ./capy-cafe help IncrementAge
+Usage: capy-cafe [GLOBAL_OPTIONS] IncrementAge [COMMAND_INPUTS]
+
+A trip around the sun!
+
+Command inputs:
+
+ -c, --capybara CAPYBARA          Required
+```
+
+The connector automatically abbreviates each flag name with a short single-letter alias where possible.
+
+## Running commands
+
+Pass the command name followed by `--input-name value` flags:
+
+```
+$ ./capy-cafe FindCapybara --id 3
+id: 3,
+name: "Basil",
+nickname: "baz",
+age: 301
+```
+
+<Steps>
+  <Step title="Run a command">
+    Call the command by name and supply its inputs as flags.
+
+    ```bash
+    $ ./capy-cafe IncrementAge --capybara 3
+    id: 3,
+    name: "Basil",
+    nickname: "baz",
+    age: 302
+    ```
+  </Step>
+  <Step title="Verify the result">
+    Use another command to confirm the state change persisted.
+
+    ```bash
+    $ ./capy-cafe FindCapybara --id 3
+    id: 3,
+    name: "Basil",
+    nickname: "baz",
+    age: 302
+    ```
+  </Step>
+</Steps>
+
+## Passing entity primary keys
+
+When a command input expects an entity, the CLI connector accepts the entity's **primary key** as the flag value. Foobara resolves the entity record from the data store automatically.
+
+```bash
+# --capybara accepts the primary key (integer id) of a Capybara entity
+$ ./capy-cafe IncrementAge --capybara 3
+```
+
+This matches the behavior of the HTTP connector, where you would pass `?capybara=3` in the query string.
+
+<Note>
+  The CLI connector reads `ARGV` directly, so it works naturally with shell pipelines. You can pipe the output of one command into another script or filter with standard tools like `grep`:
+
+  ```bash
+  $ ./capy-cafe FindCapybara --id 1 | grep age
+  age: 302
+  ```
+</Note>
+
+<Tip>
+  You can connect the CLI connector alongside other connectors in the same script. For example, connecting both `IncrementAge` and its async variant `IncrementAgeAsync` (created by the Resque connector) lets you drive both synchronous and async workflows from a single executable. See [Async & Scheduler](/connectors/async-and-scheduler) for details.
+</Tip>

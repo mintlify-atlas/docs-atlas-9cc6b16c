@@ -1,0 +1,337 @@
+---
+title: "Code Generators: Scaffold Foobara Projects Fast"
+sidebarTitle: "Generators"
+description: "Use the foob CLI to scaffold Ruby projects, domains, commands, types, and connectors from pre-built generators in seconds."
+---
+
+Foobara's discoverability model — where every command, type, and domain carries machine-readable metadata — makes code generation a natural first-class feature. The `foob` CLI gem bundles a growing library of generators so you can bootstrap complete project structures, individual classes, and even full-stack TypeScript integrations without writing boilerplate by hand.
+
+## Installing the CLI
+
+Install the `foob` gem globally with:
+
+```bash
+gem install foob
+```
+
+Once installed, the `foob generate` command (aliased as `foob g`) is available from your terminal.
+
+## Listing Available Generators
+
+Running `foob g` without arguments prints all available generators:
+
+```bash
+foob g
+```
+
+```
+Usage: foob generate [GENERATOR_KEY] [GENERATOR_OPTIONS]
+
+Available Generators:
+
+autocrud
+command
+domain
+domain-mapper
+organization
+rack-connector
+redis-crud-driver
+remote-imports
+resque-connector
+resque-scheduler-connector
+ruby-project
+sh-cli-connector
+type
+typescript-react-command-form
+typescript-react-project
+typescript-remote-commands
+```
+
+To see the options for any individual generator, use `foob help [GENERATOR_NAME]`:
+
+```bash
+foob help type
+```
+
+```
+Usage: foob [GLOBAL_OPTIONS] type [COMMAND_INPUTS]
+
+Command inputs:
+
+-n, --name NAME
+-t, --type TYPE                       One of: entity, model, type. Default: :type
+-d, --description DESCRIPTION
+--domain DOMAIN
+-o, --organization ORGANIZATION
+--output-directory OUTPUT_DIRECTORY
+```
+
+## Generating a New Ruby Project
+
+The fastest way to start a fresh Foobara Ruby project is the `ruby-project` generator. Pass the `--name` flag using the `org/project` convention:
+
+```bash
+foob generate ruby-project --name your-org/your-project
+```
+
+This creates a fully structured gem directory ready for development. After generation, use the individual generators below to add domains, commands, and types. For example, to regenerate the artifacts from the tutorial examples:
+
+```bash
+cd your-org/your-project
+foob g domain --name YourOrg::IntegerMath
+foob g domain --name YourOrg::CapyCafe
+foob g type -t entity --organization YourOrg --domain CapyCafe --name Capybara
+foob g type --organization YourOrg --domain CapybaraDivingCompetition --name email_address
+foob g type -t entity --organization YourOrg --domain CapybaraDivingCompetition --name Judge
+foob g command --name YourOrg::IntegerMath::Add
+foob g command --name YourOrg::IntegerMath::Subtract
+foob g command --name YourOrg::IntegerMath::Divide
+foob g command --name YourOrg::CapyCafe::CreateCapybara
+foob g command --name YourOrg::CapyCafe::FindCapybara
+foob g command --name YourOrg::CapyCafe::IncrementAge
+foob g sh-cli-connector --name capy-cafe
+```
+
+### Generated Directory Structure
+
+Running those generators inside the project root produces this layout:
+
+```
+.
+├── bin
+│   ├── capy-cafe
+│   └── console
+├── boot
+│   ├── config.rb
+│   ├── crud.rb
+│   ├── finish.rb
+│   └── start.rb
+├── .github
+│   └── workflows
+│       └── ci.yml
+├── lib
+│   └── your_org
+│       └── your_project.rb
+├── spec
+│   ├── your_org
+│   │   ├── capy_cafe
+│   │   │   ├── create_capybara_spec.rb
+│   │   │   ├── find_capybara_spec.rb
+│   │   │   └── increment_age_spec.rb
+│   │   ├── integer_math
+│   │   │   ├── add_spec.rb
+│   │   │   ├── divide_spec.rb
+│   │   │   └── subtract_spec.rb
+│   │   └── your_project_spec.rb
+│   ├── support
+│   │   ├── rubyprof.rb
+│   │   ├── simplecov.rb
+│   │   ├── term_trap.rb
+│   │   └── vcr.rb
+│   └── spec_helper.rb
+├── src
+│   └── your_org
+│       ├── capy_cafe
+│       │   ├── types
+│       │   │   └── capybara.rb
+│       │   ├── create_capybara.rb
+│       │   ├── find_capybara.rb
+│       │   └── increment_age.rb
+│       ├── integer_math
+│       │   ├── add.rb
+│       │   ├── divide.rb
+│       │   └── subtract.rb
+│       ├── capy_cafe.rb
+│       └── integer_math.rb
+├── boot.rb
+├── your-org-your-project.gemspec
+├── Gemfile
+├── Guardfile
+├── Rakefile
+├── README.md
+├── .rspec
+├── .rubocop.yml
+└── version.rb
+```
+
+<Note>
+  Projects use both a `lib/` and `src/` directory. `lib/` contains entry points safe to `require` from outside the project. `src/` holds everything else and is kept off the load path to keep it clean.
+</Note>
+
+## Generator Reference
+
+<Accordion title="Domain & Organization Generators">
+
+### `organization`
+
+Scaffolds an organization module with the `foobara_organization!` call and supporting files.
+
+```bash
+foob g organization --name YourOrg
+```
+
+### `domain`
+
+Scaffolds a domain module nested under an organization.
+
+```bash
+foob g domain --name YourOrg::DomainName
+```
+
+Domains are namespaces for commands, types, and errors. They support explicit unidirectional dependencies on other domains.
+
+</Accordion>
+
+<Accordion title="Command Generator">
+
+### `command`
+
+Generates a command class file and a matching spec file with the correct namespace and directory structure.
+
+```bash
+foob g command --name YourOrg::DomainName::CommandName
+```
+
+The generated command stub includes the standard `inputs`, `result`, and `execute` blocks ready to fill in.
+
+</Accordion>
+
+<Accordion title="Type Generators (entity, model, type)">
+
+### `type`
+
+Generates a type file. Use the `--type` (`-t`) flag to choose between `entity`, `model`, or a plain `type`.
+
+**Generate an entity (has a primary key, persisted via a CRUD driver):**
+
+```bash
+foob g type -t entity --organization YourOrg --domain DomainName --name TypeName
+```
+
+**Generate a model (value object, no persistence):**
+
+```bash
+foob g type -t model --organization YourOrg --domain DomainName --name TypeName
+```
+
+**Generate a named custom type (e.g., a validated email address):**
+
+```bash
+foob g type --organization YourOrg --domain DomainName --name email_address
+```
+
+Use `foob help type` to see all available options.
+
+</Accordion>
+
+<Accordion title="CRUD Driver Generators">
+
+### `redis-crud-driver`
+
+Generates the wiring to use Redis as a CRUD driver for persisting entities.
+
+```bash
+foob g redis-crud-driver
+```
+
+### `autocrud`
+
+Generates create, read, update, and delete commands for an existing entity type automatically.
+
+```bash
+foob g autocrud
+```
+
+</Accordion>
+
+<Accordion title="Connector Generators">
+
+### `rack-connector`
+
+Generates a `config.ru` and connector setup so your commands are exposed over HTTP via Rack.
+
+```bash
+foob g rack-connector
+```
+
+### `sh-cli-connector`
+
+Generates a CLI executable (in `bin/`) that exposes your commands as sub-commands on the terminal.
+
+```bash
+foob g sh-cli-connector --name my-cli
+```
+
+### `resque-connector`
+
+Generates async job wiring so commands can be dispatched as background Resque jobs.
+
+```bash
+foob g resque-connector
+```
+
+### `resque-scheduler-connector`
+
+Generates cron/scheduled job support on top of Resque Scheduler for commands that need to run on a timer.
+
+```bash
+foob g resque-scheduler-connector
+```
+
+</Accordion>
+
+<Accordion title="Remote & Integration Generators">
+
+### `remote-imports`
+
+Generates the boot-time wiring to import commands, types, and errors from a remote Foobara backend by fetching its manifest.
+
+```bash
+foob g remote-imports
+```
+
+### `domain-mapper`
+
+Generates a `DomainMapper` class stub for mapping a concept from one domain into another.
+
+```bash
+foob g domain-mapper
+```
+
+</Accordion>
+
+<Accordion title="TypeScript / React Generators">
+
+### `typescript-react-project`
+
+Scaffolds a new TypeScript React frontend project configured to work with a Foobara Ruby backend.
+
+```bash
+foob g typescript-react-project -p path/to/project-dir
+```
+
+### `typescript-remote-commands`
+
+Imports all commands, types, domains, and errors from a running Foobara backend and generates TypeScript proxies for them.
+
+```bash
+foob g typescript-remote-commands --manifest-url http://your.foobara.backend/manifest
+```
+
+### `typescript-react-command-form`
+
+Generates a ready-to-use React form component for a specific command, including field types and error handling.
+
+```bash
+foob g typescript-react-command-form \
+  --manifest-url http://your.foobara.backend/manifest \
+  --command-name YourOrg::YourDomain::YourCommand
+```
+
+See the [TypeScript Integration](/tooling/typescript-integration) page for the full end-to-end workflow.
+
+</Accordion>
+
+<Tip>
+  Run `foob help [GENERATOR_NAME]` at any time for a full list of flags for a given generator, including optional `--output-directory` overrides.
+</Tip>

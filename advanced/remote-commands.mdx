@@ -1,0 +1,176 @@
+---
+title: "Remote Commands: Cross-Service Command Proxies"
+sidebarTitle: "Remote Commands"
+description: "Import Foobara commands from a remote service and invoke them with the same interface as local commands — including errors, types, and domains."
+---
+
+One of Foobara's most powerful features is the ability to run a command defined in a completely separate process or server as if it were a local Ruby class. These **remote commands** are proxy objects generated at runtime from a service's manifest. They share the exact same interface as their local counterparts — same `.run`, `.run!`, same error classes, same type coercions — so the code that calls a command never needs to change when that command moves from one service to another.
+
+## How Remote Commands Work
+
+When you import from a remote Foobara service, the `foobara-remote-imports` gem fetches the `/manifest` endpoint of that service and dynamically defines Ruby classes for every command, type, error, domain, and organization described in the manifest. From that point on, calling `FindCapybara.run!(id: 1)` sends an HTTP request to the remote service and deserialises the response, returning a fully cast `Capybara` model instance.
+
+<Note>
+  Remote commands require the `foobara-remote-imports` gem. Install it with `gem install foobara-remote-imports` or add it to your `Gemfile`.
+</Note>
+
+## Importing Remote Commands
+
+The entry point is `Foobara::RemoteImports::ImportCommand`. Pass it the URL of the remote service's `/manifest` endpoint:
+
+```ruby
+require "foobara"
+require "foobara/remote_imports"
+
+Foobara::RemoteImports::ImportCommand.run!(
+  manifest_url: "http://localhost:9292/manifest",
+  cache: true
+)
+```
+
+After this single call, every command, type, error, domain, and organization exposed by the remote service is available as a Ruby constant in the current process. The `cache: true` option writes the manifest to disk so subsequent runs skip the HTTP round-trip.
+
+## Using Remote Commands
+
+Once imported, remote commands are indistinguishable from local ones:
+
+```ruby
+# Find a capybara by ID — sends an HTTP request to the remote service
+capybara = FindCapybara.run!(id: 1)
+# => #<Capybara:0x00007f6895bb2998 @attributes={:name=>"Fumiko", :nickname=>"foo", :age=>100, :id=>1}, @mutable=false>
+
+capybara.age
+# => 100
+
+capybara.name
+# => "Fumiko"
+```
+
+The result is a real `Capybara` model instance, not a plain hash. All attribute accessors work, and the type system enforces the same constraints as on the server.
+
+## Error Propagation
+
+Remote commands preserve error semantics. Validation errors, cast errors, and custom runtime errors all surface with the same messages and structure as they would locally:
+
+```ruby
+outcome = FindCapybara.run(id: "asdf")
+outcome.success?
+# => false
+
+puts outcome.errors_sentence
+# At id: Cannot cast "asdf" to an integer. Expected it to be a Integer, or be a string
+# of digits optionally with a minus sign in front
+```
+
+Custom errors defined in the remote service are also imported as real Ruby error classes, so `rescue` blocks and `outcome.errors_hash` work exactly as they do with local commands.
+
+## Importing from Multiple Services
+
+You can import from any number of remote services in the same process. Each import is scoped to its own organization and domain namespaces, so there are no collisions:
+
+```ruby
+# Import the integer math service (running on port 9292)
+Foobara::RemoteImports::ImportCommand.run!(
+  manifest_url: "http://localhost:9292/manifest"
+)
+
+# Import the capybara cafe service (running on port 9293)
+Foobara::RemoteImports::ImportCommand.run!(
+  manifest_url: "http://localhost:9293/manifest"
+)
+
+# Both sets of commands are now available under their original namespaces
+FoobaraDemo::IntegerMath::Add.run!(operand1: 3, operand2: 4)
+# => 7
+
+FoobaraDemo::CapyCafe::FindCapybara.run!(id: 1)
+# => <Capybara:1>
+```
+
+## Rearchitecting Without Refactoring
+
+The most powerful implication of remote commands is that you can move domain logic between services without changing a single line of calling code. Consider a command `ImportAnimal` that currently lives in the same process as its callers. If you later extract it to a dedicated service, you simply:
+
+1. Boot the new service
+2. Replace `require "my_gem/import_animal"` with `Foobara::RemoteImports::ImportCommand.run!(manifest_url: ...)`
+3. Done — all call sites remain unchanged
+
+This property makes Foobara particularly suitable for incremental extraction of monoliths into services and for teams that want to defer architectural decisions without locking in calling code.
+
+<Tip>
+  Combine remote imports with the `foob` CLI tool to generate a TypeScript SDK from the same manifest. See the TypeScript integration guide for details.
+</Tip>
+
+## Full Worked Example
+
+<Steps>
+  <Step title="Boot the remote service">
+    Start a Rack server that exposes your commands:
+
+    ```ruby
+    # server.rb
+    require "foobara/rack_connector"
+    require "rackup/server"
+
+    # ... define Capybara entity and commands ...
+
+    command_connector = Foobara::CommandConnectors::Http::Rack.new
+    command_connector.connect(CreateCapybara)
+    command_connector.connect(FindCapybara)
+    command_connector.connect(IncrementAge)
+
+    Rackup::Server.start(app: command_connector)
+    ```
+  </Step>
+
+  <Step title="Import in the client process">
+    In a separate script or service, import everything from the manifest:
+
+    ```ruby
+    #!/usr/bin/env ruby
+
+    require "foobara"
+    require "foobara/remote_imports"
+
+    Foobara::RemoteImports::ImportCommand.run!(
+      manifest_url: "http://localhost:9292/manifest",
+      cache: true
+    )
+    ```
+  </Step>
+
+  <Step title="Call remote commands like local ones">
+    ```ruby
+    # Create a capybara on the remote service
+    fumiko = CreateCapybara.run!(name: "Fumiko", nickname: "foo", age: 100)
+    # => <Capybara:1>
+
+    # Find it back
+    found = FindCapybara.run!(id: fumiko.id)
+    found.name
+    # => "Fumiko"
+
+    # Increment age — persisted on the remote service
+    IncrementAge.run!(capybara: fumiko.id)
+    FindCapybara.run!(id: fumiko.id).age
+    # => 101
+    ```
+  </Step>
+</Steps>
+
+## TypeScript SDK Generation
+
+Because the manifest is language-agnostic JSON, the same mechanism works for TypeScript frontends. The `foob` CLI generates a complete, fully-typed TypeScript SDK directly from any running Foobara service:
+
+```bash
+# Generate TypeScript remote commands from a live manifest
+foob generate typescript-remote-commands \
+  --manifest-url http://localhost:9292/manifest
+
+# Optionally generate a React form for a specific command
+foob generate typescript-react-command-form \
+  --manifest-url http://localhost:9292/manifest \
+  --command-name CreateCapybara
+```
+
+The generated TypeScript classes mirror the Ruby remote command pattern — same interface, same error types, automatically regenerated whenever the backend manifest changes.

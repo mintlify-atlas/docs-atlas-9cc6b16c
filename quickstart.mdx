@@ -1,47 +1,364 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Foobara Quickstart: Commands, Entities, and Connectors"
+sidebarTitle: "Quickstart"
+description: "Build a CreateCapybara command backed by an entity, handle outcomes, add a domain, then expose everything over CLI and HTTP with Foobara connectors."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
+This guide walks you through the core Foobara workflow end-to-end: defining a command, running it, modelling a persistent entity, grouping things into a domain, and wiring up CLI and HTTP connectors — all without writing any integration boilerplate. Every code example below is drawn directly from the Foobara README.
 
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+<Note>
+  Make sure you have `foobara`, `foobara-sh-cli-connector`, `foobara-rack-connector`, and `foobara-local-files-crud-driver` installed before running the HTTP and CLI sections. See the [Installation guide](/installation) for details.
+</Note>
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
 
-    ```bash
-    npm install your-package
-    ```
-  </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+### Write your first command
 
-    ```bash
-    your-cli init
-    ```
-  </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+Foobara commands are plain Ruby classes that inherit from `Foobara::Command`. You declare typed inputs, a result type, and implement `#execute`. The `#execute` method is meant to read like a self-documenting outline of the operation — it calls helper methods rather than containing inline logic.
 
-    ```bash
-    your-cli start
-    ```
-  </Step>
-</Steps>
+```ruby
+require "foobara"
+
+class Add < Foobara::Command
+  inputs do
+    operand1 :integer, :required
+    operand2 :integer, :required
+  end
+
+  result :integer
+
+  def execute
+    add_operands
+
+    sum
+  end
+
+  attr_accessor :sum
+
+  def add_operands
+    self.sum = operand1 + operand2
+  end
+end
+```
+
+Inputs are accessed directly as methods inside the command (`operand1`, `operand2`). Runtime state is stored in `attr_accessor` fields (`sum`). This keeps the interface clean and avoids accidental coupling between inputs and computed values.
+
+### Run the command and handle the Outcome
+
+Every command call returns an `Outcome` object. You can run a command three ways:
+
+```ruby
+# 1. Instantiate, then run — returns an Outcome
+command = Add.new(operand1: 2, operand2: 5)
+outcome = command.run
+outcome.success?   # => true
+outcome.result     # => 7
+
+# 2. Class-level shorthand — same as above
+outcome = Add.run(operand1: 2, operand2: 5)
+outcome.success?   # => true
+outcome.result     # => 7
+
+# 3. Bang variant — returns the result directly or raises
+Add.run!(operand1: 2, operand2: 5)   # => 7
+```
+
+When inputs are invalid, Foobara populates the outcome with structured errors instead of raising:
+
+```ruby
+outcome = Add.run(operand1: "foo", operand2: 5)
+outcome.success?        # => false
+puts outcome.errors_sentence
+# At operand1: Cannot cast "foo" to an integer. Expected it to be a Integer,
+# or be a string of digits optionally with a minus sign in front
+
+outcome = Add.run
+outcome.success?        # => false
+puts outcome.errors_sentence
+# Missing required attribute operand1, and Missing required attribute operand2
+```
 
 <Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
-
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+  Use `.run` when you need to inspect errors and return them to a caller. Use `.run!` in tests or places where an error is always a programmer mistake and you want an exception.
 </Tip>
+
+### Define a Capybara entity
+
+An **entity** is a typed model with a primary key and persistence through a CRUD driver. First, set up a CRUD driver (in-memory for now):
+
+```ruby
+require "foobara"
+
+crud_driver = Foobara::Persistence::CrudDrivers::InMemory.new
+Foobara::Persistence.default_crud_driver = crud_driver
+
+class Capybara < Foobara::Entity
+  attributes do
+    id       :integer
+    name     :string,  :required, "Official name"
+    nickname :string,             "Informal name for friends"
+    age      :integer, :required, "The number of times this capybara has gone around the sun"
+  end
+
+  primary_key :id
+end
+```
+
+### Write a CreateCapybara command
+
+`Capybara.attributes_for_create` returns the attributes hash with the primary key stripped out — exactly what you want for a creation form. Foobara handles type-casting and validation automatically:
+
+```ruby
+class CreateCapybara < Foobara::Command
+  description "Just creates a capybara!"
+
+  inputs Capybara.attributes_for_create
+  result Capybara
+
+  def execute
+    create_capybara
+
+    capybara
+  end
+
+  attr_accessor :capybara
+
+  def create_capybara
+    self.capybara = Capybara.create(inputs)
+  end
+end
+```
+
+Run it and inspect the result:
+
+```ruby
+fumiko  = CreateCapybara.run!(name: "Fumiko",  nickname: "foo", age: 100)  # => <Capybara:1>
+barbara = CreateCapybara.run!(name: "Barbara", nickname: "bar", age: 200)  # => <Capybara:2>
+basil   = CreateCapybara.run!(name: "Basil",   nickname: "baz", age: 300)  # => <Capybara:3>
+
+basil.age   # => 300
+```
+
+Foobara auto-assigns integer primary keys and returns fully hydrated entity instances.
+
+### Persist to disk with the local-files CRUD driver
+
+The `InMemory` driver does not survive process restarts. Swap it for the file-based driver to persist records across runs:
+
+```ruby
+require "foobara/local_files_crud_driver"
+
+crud_driver = Foobara::LocalFilesCrudDriver.new
+Foobara::Persistence.default_crud_driver = crud_driver
+```
+
+Records are written to `local_data/records.yml` automatically. On the next run you can load them back:
+
+```ruby
+class FindCapybara < Foobara::Command
+  inputs do
+    id Capybara.primary_key_type, :required
+  end
+
+  result Capybara
+
+  def execute
+    load_capybara
+
+    capybara
+  end
+
+  attr_accessor :capybara
+
+  def load_capybara
+    self.capybara = Capybara.load(id)
+  end
+end
+
+basil = FindCapybara.run!(id: 3)
+basil.age   # => 300
+```
+
+### Organise commands inside a Domain
+
+Domains are Ruby modules declared with `.foobara_domain!`. They act as namespaces for commands, types, and errors and can declare explicit, unidirectional dependencies on other domains.
+
+```ruby
+module IntegerMath
+  foobara_domain!
+
+  class Add < Foobara::Command
+    inputs do
+      operand1 :integer, :required
+      operand2 :integer, :required
+    end
+
+    result :integer
+
+    def execute
+      add_operands
+
+      sum
+    end
+
+    attr_accessor :sum
+
+    def add_operands
+      self.sum = operand1 + operand2
+    end
+  end
+end
+```
+
+Nest a domain inside an **Organization** to reflect team or product structure:
+
+```ruby
+module FoobaraExamples
+  foobara_organization!
+
+  module IntegerMath
+    foobara_domain!
+
+    class Add < Foobara::Command
+      # ... same as above
+    end
+  end
+end
+
+FoobaraExamples.foobara_domains
+# => [FoobaraExamples::IntegerMath]
+
+IntegerMath.foobara_command_classes
+# => [IntegerMath::Add]
+```
+
+### Connect a CLI connector
+
+Install the shell connector gem if you haven't already:
+
+```bash
+gem install foobara-sh-cli-connector
+```
+
+Then wire it up at the bottom of your script. Calling `command_connector.run(ARGV)` hands argument parsing, `--help` output, and result formatting to Foobara completely:
+
+```ruby
+require "foobara/sh_cli_connector"
+
+command_connector = Foobara::CommandConnectors::ShCliConnector.new
+
+command_connector.connect(CreateCapybara)
+command_connector.connect(FindCapybara)
+
+command_connector.run(ARGV)
+```
+
+Save the file as (or symlink it to) `capy-cafe` and run it:
+
+```bash
+$ ./capy-cafe
+Usage: capy-cafe [GLOBAL_OPTIONS] [ACTION] [COMMAND_OR_TYPE] [COMMAND_INPUTS]
+
+Available commands:
+
+  CreateCapybara   Just creates a capybara!
+  FindCapybara
+```
+
+Get per-command help automatically:
+
+```bash
+$ ./capy-cafe help FindCapybara
+Usage: capy-cafe [GLOBAL_OPTIONS] FindCapybara [COMMAND_INPUTS]
+
+Command inputs:
+
+ -i, --id ID                      Required
+```
+
+Run a command from the shell:
+
+```bash
+$ ./capy-cafe FindCapybara --id 3
+id: 3,
+name: "Basil",
+nickname: "baz",
+age: 300
+```
+
+No routing table. No option-parser code. No serializer. Foobara derives all of it from the command's declared inputs and result type.
+
+### Connect a Rack HTTP connector
+
+Install the Rack connector gem:
+
+```bash
+gem install foobara-rack-connector
+```
+
+Replace (or add alongside) the CLI connector with the Rack connector. Pass the connector instance directly to Rack's server:
+
+```ruby
+require "foobara/rack_connector"
+require "rackup/server"
+
+command_connector = Foobara::CommandConnectors::Http::Rack.new
+
+command_connector.connect(CreateCapybara)
+command_connector.connect(FindCapybara)
+
+Rackup::Server.start(app: command_connector)
+```
+
+Boot the server and you'll see Puma start on port 9292:
+
+```
+Puma starting in single mode...
+* Puma version: 6.5.0 ("Sky's Version")
+* Listening on http://0.0.0.0:9292
+```
+
+Hit the endpoints with `curl`:
+
+```bash
+# Find a capybara by ID
+$ curl "http://localhost:9292/run/FindCapybara?id=1"
+{"name":"Fumiko","nickname":"foo","age":100,"id":1}
+
+# Create a new capybara
+$ curl -X POST "http://localhost:9292/run/CreateCapybara" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Taro","nickname":"tar","age":50}'
+{"name":"Taro","nickname":"tar","age":50,"id":4}
+```
+
+Foobara also exposes a human-readable help endpoint and a machine-readable manifest endpoint automatically:
+
+```bash
+# Browse help for any command or type
+curl http://localhost:9292/help/FindCapybara
+
+# Fetch the full manifest (used by foob generators and remote-imports)
+curl http://localhost:9292/manifest
+```
+
+</Steps>
+
+## What's next?
+
+You now have a fully working Foobara application with persistence, a CLI interface, and an HTTP API — all driven from the same two command classes. From here you can explore:
+
+<CardGroup cols={2}>
+  <Card title="Subcommands" icon="diagram-project">
+    Call one command from another with `run_subcommand!` and let Foobara propagate errors up the call chain automatically.
+  </Card>
+  <Card title="Custom Errors" icon="triangle-exclamation">
+    Declare typed input errors with `possible_input_error` and runtime errors with `possible_error` so tooling and callers know exactly what can go wrong.
+  </Card>
+  <Card title="Domain Mappers" icon="arrows-left-right">
+    Write a `Foobara::DomainMapper` to translate concepts between domains and call it with `run_mapped_subcommand!` inside a command.
+  </Card>
+  <Card title="Remote Commands" icon="cloud">
+    Import commands from a running Foobara service with `foobara-remote-imports` and call them as if they were local — same interface, zero refactoring.
+  </Card>
+</CardGroup>

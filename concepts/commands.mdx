@@ -1,0 +1,294 @@
+---
+title: "Commands: Encapsulating Domain Operations in Foobara"
+sidebarTitle: "Commands"
+description: "Learn how Foobara commands encapsulate domain operations, declare typed inputs and results, and return structured outcomes with errors."
+---
+
+Commands are the central building block of every Foobara application. Each command represents a single, well-defined domain operation — creating a record, performing a calculation, triggering a workflow — and acts as the formal public interface to your system. Because every command carries machine-readable metadata, the framework can automatically expose that operation over HTTP, a CLI, an MCP server, or any other transport without you writing any integration code.
+
+## Anatomy of a Command
+
+A Foobara command is a class that inherits from `Foobara::Command`. It declares its **inputs**, its **result type**, and implements a single `#execute` method. The class name itself becomes discoverable metadata.
+
+```ruby
+require "foobara"
+
+class Add < Foobara::Command
+  description "Adds two integers and returns their sum."
+
+  inputs do
+    operand1 :integer, :required
+    operand2 :integer, :required
+  end
+
+  result :integer
+
+  def execute
+    add_operands
+
+    sum
+  end
+
+  attr_accessor :sum
+
+  def add_operands
+    self.sum = operand1 + operand2
+  end
+end
+```
+
+<Note>
+The `description` class method attaches a human-readable string to the command. This string appears in CLI help output, HTTP `/help` endpoints, and generated manifests.
+</Note>
+
+---
+
+## The `inputs` DSL
+
+The `inputs` block uses an **attributes DSL** to declare the inputs your command accepts. Each line follows the pattern:
+
+```
+attribute_name  type_symbol  [processors...]  [description_string]
+```
+
+Foobara validates and casts inputs before `#execute` is ever called, so your logic can trust that `operand1` is already a proper Ruby `Integer`.
+
+### Built-in processors
+
+<CardGroup cols={2}>
+  <Card title=":required" icon="asterisk">
+    Fails with `missing_required_attribute` when the input is absent.
+  </Card>
+  <Card title=":allow_nil" icon="circle-dashed">
+    Permits `nil` even when the type normally forbids it.
+  </Card>
+  <Card title=":allow_blank" icon="text-slash">
+    Permits empty strings and similar blank values.
+  </Card>
+  <Card title="one_of:" icon="list-check">
+    Restricts values to a specific enumeration.
+  </Card>
+  <Card title="max: / min:" icon="sliders">
+    Validates numeric or string-length bounds.
+  </Card>
+  <Card title="matches:" icon="filter">
+    Validates against a regular expression.
+  </Card>
+  <Card title=":downcase" icon="arrow-down-a-z">
+    Transforms a string to lowercase before storing it.
+  </Card>
+</CardGroup>
+
+```ruby
+inputs do
+  operand1 :integer, :required
+  operand2 :integer, :required, one_of: [1, 2, 5, 10], min: 1, max: 10,
+            "Must be one of the allowed divisors"
+end
+```
+
+---
+
+## The `result` Declaration
+
+Use `result` to declare the type of value your `#execute` method returns. Foobara processes the raw return value through the declared type, so callers always receive a properly typed object.
+
+```ruby
+result :integer          # scalar built-in type
+result Capybara          # a model or entity class
+result :array            # an untyped array
+```
+
+---
+
+## The `#execute` Method Convention
+
+`#execute` is the only method the framework calls directly. The recommended style is to keep it **self-documenting**: each line calls a named helper method, and no arguments are passed between helpers. State is shared via `attr_accessor` instance variables, giving you a clean runtime context.
+
+```ruby
+def execute
+  initialize_quotient_to_zero
+  make_operands_positive_and_determine_if_result_is_negative
+
+  until dividend_less_than_divisor?
+    increment_quotient
+    subtract_divisor_from_dividend
+  end
+
+  negate_quotient if negative_result?
+
+  quotient
+end
+
+attr_accessor :negative_result, :quotient
+```
+
+<Tip>
+Reading `#execute` alone should communicate the high-level algorithm. Push implementation details into private helper methods so future readers can operate at the right level of abstraction.
+</Tip>
+
+---
+
+## Running Commands
+
+Foobara provides three ways to run a command, each suited to a different context.
+
+<Tabs>
+  <Tab title="Instance + #run">
+    Create an instance, then call `#run`. Useful when you need a reference to the command object itself.
+
+    ```ruby
+    command = Add.new(operand1: 2, operand2: 5)
+    outcome = command.run
+    outcome.success? # => true
+    outcome.result   # => 7
+    ```
+  </Tab>
+  <Tab title=".run (class method)">
+    The most common form — create and run in one step, always returns an `Outcome`.
+
+    ```ruby
+    outcome = Add.run(operand1: 2, operand2: 5)
+    outcome.success? # => true
+    outcome.result   # => 7
+    ```
+  </Tab>
+  <Tab title=".run! (bang)">
+    Returns the result directly, or raises `Foobara::Outcome::UnsuccessfulOutcomeError` on failure. Ideal for scripts, tests, and trusted internal callers.
+
+    ```ruby
+    Add.run!(operand1: 2, operand2: 5) # => 7
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## The `Foobara::Outcome` Object
+
+Every `#run` call returns a `Foobara::Outcome`. The outcome encapsulates success, result, and any errors as a single value object — no exceptions for expected failures.
+
+<ParamField body="success?" type="Boolean">
+  Returns `true` when the command completed without errors.
+</ParamField>
+
+<ParamField body="result" type="Object">
+  The value returned by `#execute`, cast to the declared result type. `nil` on failure.
+</ParamField>
+
+<ParamField body="errors" type="Array">
+  An array of `Foobara::Error` objects describing what went wrong.
+</ParamField>
+
+<ParamField body="errors_sentence" type="String">
+  A human-readable, comma-separated summary of all error messages — handy for logging or simple UIs.
+</ParamField>
+
+<ParamField body="errors_hash" type="Hash">
+  A keyed map of every error, with full metadata (key, path, category, message, context). Used by connectors and clients.
+</ParamField>
+
+### Error output examples
+
+```ruby
+# Wrong type — input cast fails
+outcome = Add.run(operand1: "foo", operand2: 5)
+outcome.success?        # => false
+puts outcome.errors_sentence
+# => At operand1: Cannot cast "foo" to an integer. Expected it to be
+#    a Integer, or be a string of digits optionally with a minus sign in front
+
+# Missing required inputs
+outcome = Add.run
+puts outcome.errors_sentence
+# => Missing required attribute operand1, and Missing required attribute operand2
+```
+
+---
+
+## Runtime Context with `attr_accessor`
+
+Because a command instance is created fresh for every run, it is safe to accumulate computed values as instance variables. Declare these with `attr_accessor` at the class level — the framework and your helper methods can then read and write them throughout the execution lifecycle.
+
+```ruby
+class CreateCapybara < Foobara::Command
+  inputs Capybara.attributes_for_create
+  result Capybara
+
+  def execute
+    create_capybara
+
+    capybara            # returned as the result
+  end
+
+  attr_accessor :capybara   # runtime context holder
+
+  def create_capybara
+    self.capybara = Capybara.create(inputs)
+  end
+end
+```
+
+---
+
+## Complete Example
+
+The following is the full `Add` command from the README, usable as a standalone script:
+
+```ruby
+#!/usr/bin/env ruby
+require "foobara"
+
+class Add < Foobara::Command
+  description "Adds two integers together."
+
+  inputs do
+    operand1 :integer, :required
+    operand2 :integer, :required
+  end
+
+  result :integer
+
+  def execute
+    add_operands
+
+    sum
+  end
+
+  attr_accessor :sum
+
+  def add_operands
+    self.sum = operand1 + operand2
+  end
+end
+
+# Running it three ways:
+outcome = Add.new(operand1: 2, operand2: 5).run
+puts outcome.result          # => 7
+
+outcome = Add.run(operand1: 2, operand2: 5)
+puts outcome.success?        # => true
+
+result = Add.run!(operand1: 2, operand2: 5)
+puts result                  # => 7
+```
+
+<Accordion title="What happens when inputs fail?">
+  Foobara validates and casts inputs before `#execute` is called. If any input fails — a wrong type, a missing required field, or a failed `one_of:` check — the run terminates early and the outcome contains detailed error objects. The `errors_hash` key follows the pattern `"data.<attribute>.<error_symbol>"`.
+
+  ```ruby
+  outcome = Add.run(operand1: "not-a-number", operand2: 5)
+  outcome.success?       # => false
+  outcome.errors_hash
+  # => {
+  #   "data.operand1.cannot_cast" => {
+  #     key: "data.operand1.cannot_cast",
+  #     path: [:operand1],
+  #     category: :data,
+  #     symbol: :cannot_cast,
+  #     message: "Cannot cast \"not-a-number\" to an integer...",
+  #     ...
+  #   }
+  # }
+  ```
+</Accordion>

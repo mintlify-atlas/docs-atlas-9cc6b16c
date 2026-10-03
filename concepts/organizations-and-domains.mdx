@@ -1,0 +1,209 @@
+---
+title: "Organizations and Domains: Structuring Foobara Systems"
+sidebarTitle: "Domains"
+description: "Understand how Foobara domains namespace commands and types, how organizations group domains, and how to declare unidirectional dependencies."
+---
+
+Real applications quickly outgrow a flat list of commands. Foobara provides two complementary namespacing mechanisms — **Domains** and **Organizations** — that let you organise commands, types, and errors into coherent conceptual units while enforcing clean, unidirectional dependency graphs between them.
+
+## Domains
+
+A domain is a Ruby module that has been promoted to a Foobara namespace by calling `foobara_domain!` on it. It groups related commands, types, and errors that belong to the same conceptual area of your problem space.
+
+```ruby
+module IntegerMath
+  foobara_domain!
+end
+```
+
+Once a module is a domain, any command, model, entity, or custom type defined inside it automatically belongs to that domain.
+
+```ruby
+module IntegerMath
+  class Add < Foobara::Command
+    inputs do
+      operand1 :integer, :required
+      operand2 :integer, :required
+    end
+
+    result :integer
+
+    def execute
+      add_operands
+      sum
+    end
+
+    attr_accessor :sum
+
+    def add_operands
+      self.sum = operand1 + operand2
+    end
+  end
+end
+```
+
+<Note>
+You can reopen the module across multiple files. Just call `foobara_domain!` once in the file where the domain is first defined; subsequent files can reopen the module normally.
+</Note>
+
+---
+
+## Organizations
+
+An organization is a module that acts as a namespace for one or more domains. It is declared with `foobara_organization!`. Organizations are typically named after a team, product, or company.
+
+```ruby
+module FoobaraExamples
+  foobara_organization!
+
+  module IntegerMath
+    foobara_domain!
+
+    class Add < Foobara::Command
+      inputs do
+        operand1 :integer, :required
+        operand2 :integer, :required
+      end
+
+      result :integer
+
+      def execute
+        add_operands
+        sum
+      end
+
+      attr_accessor :sum
+
+      def add_operands
+        self.sum = operand1 + operand2
+      end
+    end
+  end
+end
+```
+
+The fully-qualified command name becomes `FoobaraExamples::IntegerMath::Add`, and that name appears in manifests, CLI help, HTTP routes, and generated SDKs.
+
+<Warning>
+A module cannot be both a domain and an organization at the same time. `foobara_domain!` and `foobara_organization!` are mutually exclusive on a single module.
+</Warning>
+
+---
+
+## Domain Dependencies with `foobara_depends_on`
+
+Domains can use concepts from other domains, but only if the dependency is explicitly declared. This creates a **unidirectional dependency graph** that prevents circular dependencies and makes the system's conceptual architecture explicit and inspectable.
+
+```ruby
+module FoobaraDemo
+  foobara_organization!
+
+  module CapyCafe
+    foobara_domain!
+
+    foobara_depends_on AnimalHouse   # explicit, one-way dependency
+  end
+end
+```
+
+At runtime, a command in `CapyCafe` can reference types and invoke subcommands from `AnimalHouse`. Without the `foobara_depends_on` declaration, the framework raises a `CannotAccessDomain` error, keeping your dependency graph honest.
+
+<Tip>
+Enforcing unidirectional domain dependencies at the framework level makes architectural diagrams self-documenting. Graphing tools can read dependency information directly from the manifest.
+</Tip>
+
+---
+
+## Introspection Methods
+
+Foobara exposes several reflection methods that let you query domains and organizations at runtime. These are also the building blocks for tooling such as code generators and CLI help screens.
+
+<Tabs>
+  <Tab title="Domain introspection">
+    ```ruby
+    # List all command classes registered in a domain
+    IntegerMath.foobara_command_classes
+    # => [IntegerMath::Add]
+
+    # Look up any registered concept by name
+    IntegerMath.foobara_lookup(:Add)
+    # => IntegerMath::Add
+
+    # Retrieve the manifest of metadata for this domain
+    IntegerMath.foobara_manifest
+    # => { types: [...], depends_on: [...], ... }
+    ```
+  </Tab>
+  <Tab title="Organization introspection">
+    ```ruby
+    # List all domains belonging to an organization
+    FoobaraExamples.foobara_domains
+    # => [FoobaraExamples::IntegerMath]
+
+    # Retrieve the organization's full manifest
+    FoobaraExamples.foobara_manifest
+    # => { domains: [...], ... }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Putting It All Together
+
+The following snippet shows a complete organization containing a domain with one command. This is a pattern you will use throughout every Foobara project.
+
+```ruby
+module FoobaraExamples
+  foobara_organization!
+
+  module IntegerMath
+    foobara_domain!
+
+    class Add < Foobara::Command
+      description "Adds two integers and returns their sum."
+
+      inputs do
+        operand1 :integer, :required
+        operand2 :integer, :required
+      end
+
+      result :integer
+
+      def execute
+        add_operands
+        sum
+      end
+
+      attr_accessor :sum
+
+      def add_operands
+        self.sum = operand1 + operand2
+      end
+    end
+  end
+end
+
+# Introspect the structure
+FoobaraExamples.foobara_domains
+# => [FoobaraExamples::IntegerMath]
+
+FoobaraExamples::IntegerMath.foobara_command_classes
+# => [FoobaraExamples::IntegerMath::Add]
+
+FoobaraExamples::IntegerMath::Add.run!(operand1: 3, operand2: 4)
+# => 7
+```
+
+<Accordion title="Global domain and organization">
+  Commands and types defined outside any explicit domain or organization automatically belong to the **global domain** (`global_domain`) and **global organization** (`global_organization`). This is convenient for quick scripts but not recommended for production systems where discoverability and dependency management matter.
+</Accordion>
+
+<Accordion title="Connecting an entire organization to a command connector">
+  When connecting commands to an HTTP or CLI connector, you can pass the entire organization or domain instead of listing individual commands:
+
+  ```ruby
+  command_connector.connect(FoobaraExamples)   # connects all commands in all domains
+  command_connector.connect(FoobaraExamples::IntegerMath)   # connects all commands in one domain
+  ```
+</Accordion>

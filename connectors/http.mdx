@@ -1,0 +1,191 @@
+---
+title: "HTTP Command Connectors: Rack and Rails Connectors"
+sidebarTitle: "HTTP"
+description: "Expose Foobara commands over HTTP using the Rack connector or the Rails connector, with automatic routing, JSON responses, and built-in help endpoints."
+---
+
+Foobara ships two HTTP connectors that turn your commands into a JSON API with no hand-written controller or routing code. Both connectors share identical URL patterns and response shapes, so you can switch between them as your project grows without changing any client code.
+
+<Tabs>
+  <Tab title="Rack Connector">
+    ## Rack connector
+
+    The Rack connector wraps your commands in a standard Rack application. It works with any Rack-compatible server (Puma, Unicorn, Falcon, etc.) and is the quickest way to get an HTTP API running.
+
+    **Install the gem:**
+
+    ```bash
+    gem install foobara-rack-connector
+    ```
+
+    ### Booting with `Rackup::Server`
+
+    This approach is useful for scripts and quick prototypes. Add the following at the bottom of your script after defining your commands:
+
+    ```ruby
+    require "foobara/rack_connector"
+    require "rackup/server"
+
+    command_connector = Foobara::CommandConnectors::Http::Rack.new
+
+    command_connector.connect(CreateCapybara)
+    command_connector.connect(IncrementAge)
+    command_connector.connect(FindCapybara)
+
+    Rackup::Server.start(app: command_connector)
+    ```
+
+    Running the script produces:
+
+    ```
+    Puma starting in single mode...
+    * Puma version: 6.5.0 ("Sky's Version")
+    * Ruby version: ruby 3.2.2 (2023-03-30 revision e51014f9c0) [x86_64-linux]
+    *  Min threads: 0
+    *  Max threads: 5
+    *  Environment: development
+    *          PID: 189938
+    * Listening on http://0.0.0.0:9292
+    Use Ctrl-C to stop
+    ```
+
+    ### Using `config.ru`
+
+    For a structured project, put the connector in `config.ru` and let your server pick it up normally:
+
+    ```ruby
+    # config.ru
+    require "foobara/rack_connector"
+    require_relative "boot"   # your app boot file
+
+    command_connector = Foobara::CommandConnectors::Http::Rack.new
+
+    command_connector.connect(FoobaraDemo::CapyCafe)   # connect an entire domain
+
+    run command_connector
+    ```
+
+    Then start with `rackup` or `bundle exec puma`.
+
+    ### Connecting a whole organization
+
+    Passing an organization module registers every command in all its domains at once:
+
+    ```ruby
+    command_connector.connect(FoobaraDemo)
+    ```
+
+    This is the recommended approach for production services — new commands appear automatically.
+  </Tab>
+
+  <Tab title="Rails Connector">
+    ## Rails connector
+
+    The Rails connector integrates with the Rails router, exposing commands through the same URL patterns as the Rack connector but living inside your existing Rails application.
+
+    **Install the gem:**
+
+    ```bash
+    gem install foobara-rails-command-connector
+    ```
+
+    ### Setup in `config/routes.rb`
+
+    ```ruby
+    # config/routes.rb
+    require "foobara/rails_command_connector"
+
+    command_connector = Foobara::CommandConnectors::RailsCommandConnector.new
+
+    command_connector.connect(CreateCapybara)
+    command_connector.connect(IncrementAge)
+    command_connector.connect(FindCapybara)
+    ```
+
+    ### Routes DSL alternative
+
+    You can also use a Rails routes DSL that Foobara adds:
+
+    ```ruby
+    # config/routes.rb
+    require "foobara/rails_command_connector"
+    require "foobara/rails/routes"
+
+    Foobara::CommandConnectors::RailsCommandConnector.new
+
+    Rails.application.routes.draw do
+      command CreateCapybara
+      command IncrementAge
+      command FindCapybara
+    end
+    ```
+
+    Both approaches produce identical routing behavior — choose whichever reads better for your team.
+
+    Start the server with:
+
+    ```bash
+    rails s
+    ```
+  </Tab>
+</Tabs>
+
+## URL patterns
+
+Both connectors expose the same set of endpoints. Replace `CommandName` or `TypeName` with the fully-qualified name of the command or type (e.g. `FoobaraDemo::CapyCafe::CreateCapybara`).
+
+| URL | Description |
+|---|---|
+| `GET /run/CommandName?input=value` | Run a command, passing inputs as query-string parameters |
+| `POST /run/CommandName` | Run a command, passing inputs as a JSON body |
+| `GET /help` | List all exposed commands with descriptions |
+| `GET /help/CommandName` | Describe inputs and result type for one command |
+| `GET /help/TypeName` | Describe a type (entity, model, custom type) |
+| `GET /manifest` | Full JSON manifest of all commands, types, and errors |
+
+<Note>
+  Inputs can be sent as query-string parameters for `GET` requests or as a JSON body for `POST` requests. The connector handles both formats transparently.
+</Note>
+
+## curl examples
+
+The examples below use the Rack connector running on `localhost:9292`. For the Rails connector, change the port to `3000`.
+
+**Find a record by primary key (GET with query string):**
+
+```bash
+$ curl http://localhost:9292/run/FindCapybara?id=1
+{"name":"Fumiko","nickname":"foo","age":100,"id":1}
+```
+
+**Run a command that mutates state:**
+
+```bash
+$ curl http://localhost:9292/run/IncrementAge?capybara=1
+{"id":1,"name":"Fumiko","nickname":"foo","age":101}
+
+$ curl http://localhost:9292/run/FindCapybara?id=1
+{"name":"Fumiko","nickname":"foo","age":101,"id":1}
+```
+
+**The Rails connector uses the same URLs on port 3000:**
+
+```bash
+$ curl http://localhost:3000/run/IncrementAge?capybara=1
+{"id":1,"name":"Fumiko","nickname":"foo","age":102}
+
+$ curl http://localhost:3000/run/FindCapybara?id=1
+{"name":"Fumiko","nickname":"foo","age":102,"id":1}
+```
+
+**Browse the help endpoint in a browser or with curl:**
+
+```bash
+$ curl http://localhost:9292/help/FindCapybara
+```
+
+You can also navigate to `http://localhost:9292/help` in a browser for a human-readable overview of all commands.
+
+<Tip>
+  Entity primary keys are passed as plain scalar values. In the examples above, `capybara=1` tells the connector to look up the `Capybara` entity with id `1` — no JSON wrapping needed.
+</Tip>

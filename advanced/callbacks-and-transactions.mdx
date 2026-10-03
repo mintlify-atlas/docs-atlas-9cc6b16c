@@ -1,0 +1,233 @@
+---
+title: "Callbacks and Transactions in Foobara Commands"
+sidebarTitle: "Callbacks & Transactions"
+description: "Hook into command lifecycle transitions with before/after/around callbacks and manage entity persistence with automatic transaction commit and rollback."
+---
+
+Every Foobara command executes as a state machine. Each step of that machine — from casting inputs to committing entity changes — is a named transition you can intercept with callbacks. At the same time, any command that creates or mutates entities automatically participates in a transaction that commits on success and rolls back on failure, even when the underlying data store has no native transaction support. Understanding both of these mechanisms gives you precise control over cross-cutting concerns like logging, auditing, metrics, and test isolation.
+
+<Note>
+  Callbacks and the transaction API are expert-level features. The official documentation for some edge cases is sparse. When in doubt, consult the [YARD API docs at docs.foobara.org](https://docs.foobara.org/all/) or the spec files in the source repository.
+</Note>
+
+## The Command State Machine
+
+Foobara's `Command::StateMachine` defines the ordered transitions that every command run traverses. From the source:
+
+```ruby
+# projects/command/src/state_machine.rb
+transitions = [
+  :cast_and_validate_inputs,
+  :validate,
+  :run_execute,
+  :succeed,
+  :error,
+  :fail,
+  :reset
+]
+
+states = [
+  :initialized,
+  :inputs_casted_and_validated,
+  :validated_execution,
+  :executing,
+  :succeeded,   # terminal
+  :errored,     # terminal
+  :failed       # terminal
+]
+```
+
+When entity persistence is active, additional transitions are interleaved automatically:
+
+```
+:open_transaction
+:cast_and_validate_inputs
+:load_records
+:validate_records
+:validate
+:run_execute
+:commit_transaction
+:succeed
+```
+
+Each named transition above is a hook point for callbacks.
+
+## Registering Callbacks
+
+Callbacks can be registered on a **command instance** (fires only for that specific run) or on the **command class** (fires for every run of that command).
+
+### Instance-level callbacks
+
+```ruby
+command = MyCommand.new(some_input: "value")
+
+command.before_run_execute do |command:|
+  puts "About to execute #{command.class.name}"
+end
+
+outcome = command.run
+```
+
+### Class-level callbacks
+
+```ruby
+MyCommand.before_run_execute do |command:|
+  Rails.logger.info("Executing #{command.class.name}")
+end
+```
+
+Class-level callbacks are inherited by subclasses via a chained registry, so you can register cross-cutting behaviour on a base command class and have it apply to all descendants.
+
+## Callback Varieties
+
+For every named transition `<transition>` and for any transition via `any_transition`, Foobara generates these callback methods:
+
+| Method | When it fires |
+|---|---|
+| `before_<transition>` | Immediately before the transition runs |
+| `after_<transition>` | Immediately after the transition completes successfully |
+| `around_<transition>` | Wraps the transition; you must call `do_it.call` to proceed |
+| `before_any_transition` | Before every transition |
+| `after_any_transition` | After every transition |
+| `around_any_transition` | Wraps every transition |
+| `error_any_transition` | When an unexpected error is raised during any transition |
+
+### `around` example — tracing every transition
+
+```ruby
+MyCommand.around_any_transition do |transition:, command:, &do_it|
+  start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  do_it.call
+  elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start
+  puts "#{command.class.name}##{transition}: #{(elapsed * 1000).round(2)}ms"
+end
+```
+
+### `before_run_execute` — the most common hook
+
+```ruby
+MyCommand.before_run_execute do |command:|
+  # `command` is the command instance
+  AuditLog.create(command: command.class.name, inputs: command.inputs)
+end
+```
+
+### `after_cast_and_validate_inputs` — post-cast inspection
+
+```ruby
+command.after_cast_and_validate_inputs do |command:|
+  # Inputs have been cast and validated at this point
+  Metrics.increment("commands.validated", tags: ["command:#{command.class.name}"])
+end
+```
+
+### `error_any_transition` — unexpected exception handling
+
+```ruby
+MyCommand.error_any_transition do |error:, command:, from:, to:, transition:|
+  Sentry.capture_exception(error.cause, extra: {
+    command: command.class.name,
+    from:,
+    to:,
+    transition:
+  })
+end
+```
+
+<Note>
+  The `error_any_transition` callback fires when an **unexpected Ruby exception** (not a domain error) occurs during a transition. Domain errors added via `add_runtime_error` or input validation failures do not trigger this callback — those are part of normal command flow.
+</Note>
+
+## Removing Callbacks
+
+In test suites you sometimes need to start with a clean slate:
+
+```ruby
+after do
+  MyCommand.remove_all_callbacks
+end
+```
+
+## Transactions in Commands
+
+When a command creates, updates, or deletes entities, Foobara automatically wraps the entire run in a transaction. If the command succeeds, all entity changes are committed. If the command fails (either through domain errors or an exception), all changes are rolled back — regardless of whether the underlying CRUD driver supports native database transactions.
+
+This means you never need to write `begin / rescue / rollback` logic in your commands. The framework guarantees atomicity:
+
+```ruby
+class TransferFunds < Foobara::Command
+  inputs do
+    from_account Account, :required
+    to_account   Account, :required
+    amount       :integer, :required
+  end
+
+  result :boolean
+
+  def execute
+    debit_source
+    credit_destination
+
+    true
+  end
+
+  def debit_source
+    from_account.balance -= amount
+  end
+
+  def credit_destination
+    to_account.balance += amount
+  end
+end
+```
+
+If `credit_destination` raises an error, the debit to `from_account` is automatically rolled back. No explicit transaction management is required.
+
+## Opening Transactions in Tests and the Console
+
+Entity operations outside of a command — for example, creating fixture data in specs or exploratory work in `bin/console` — require an explicit transaction to be opened. Without one, entity writes raise an error because there is no transaction context to track and commit the changes.
+
+```ruby
+# In a test or console, wrap entity operations in a transaction block:
+Capybara.transaction do
+  fumiko  = Capybara.create(name: "Fumiko",  age: 100, nickname: "foo")
+  barbara = Capybara.create(name: "Barbara", age: 200, nickname: "bar")
+
+  # ... assertions or exploratory code ...
+end
+# Transaction commits (or rolls back if an exception was raised)
+```
+
+You can also open a transaction with an explicit rollback for read-only test fixtures:
+
+```ruby
+Capybara.transaction(mode: :read_only) do
+  # No writes will be committed
+end
+```
+
+<Tip>
+  In RSpec, consider wrapping each example in a transaction in your `spec_helper.rb` to get automatic rollback after every test without needing a database-backed transaction cleaner.
+</Tip>
+
+## Entity Change Tracking
+
+Foobara's persistence layer automatically tracks every attribute write to every entity loaded within a transaction. On commit, only the changed attributes are flushed to the CRUD driver. On rollback, the in-memory state is reverted to whatever values were loaded at the start of the transaction.
+
+This tracking works across the full subcommand chain: if `PlaceOrder` calls `DecrementInventory` as a subcommand and the outer command ultimately fails, the inventory decrement is also rolled back.
+
+## Custom CRUD Drivers
+
+If you need to read and write entities from a non-standard data store — a legacy database with an unusual schema, an external API, a message log — you can write your own CRUD driver. A CRUD driver implements a small set of primitive operations (create, read, update, delete, flush) that Foobara calls through the transaction machinery.
+
+<Accordion title="CRUD driver overview">
+  A CRUD driver is responsible for:
+
+  - **create**: Assign a primary key and store the initial record.
+  - **read / load**: Retrieve a record by primary key.
+  - **update / flush**: Persist attribute changes at commit time.
+  - **delete**: Remove a record.
+  - **transaction lifecycle hooks**: Called by Foobara when a transaction opens, commits, or rolls back.
+
+  The in-memory driver (`Foobara::Persistence::CrudDrivers::InMemory`) and the local files driver (`Foobara::LocalFilesCrudDriver`) are good reference implementations. For a detailed walkthrough of the driver API, see the [contributing guide](https://github.com/foobara/foobara/blob/main/CONTRIBUTING.md) and the [YARD documentation](https://docs.foobara.org/all/).
+</Accordion>

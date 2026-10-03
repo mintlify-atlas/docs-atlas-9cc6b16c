@@ -1,0 +1,284 @@
+---
+title: "Entities: Persistent, Identity-Bearing Domain Objects"
+sidebarTitle: "Entities"
+description: "Learn how Foobara entities add a primary key and CRUD persistence to models, how CRUD drivers work, and how commands interact with entities."
+---
+
+An entity is a model that has a **primary key** and can be persisted to and loaded from a data store. While a model is a pure in-memory value object, an entity carries identity across runs, making it the right abstraction for records you need to create, look up, update, and delete. Foobara entities are connected to a storage backend through a swappable **CRUD driver**, and all reads and writes happen within transactions that commands manage automatically.
+
+## Entity vs Model
+
+| | `Foobara::Model` | `Foobara::Entity` |
+|---|---|---|
+| Inherits from | — | `Foobara::DetachedEntity` → `Foobara::Entity` |
+| Has primary key | No | Yes |
+| Can be persisted | No | Yes (via CRUD driver) |
+| Transactions | Not applicable | Automatic inside commands |
+| Cast from integer/id | No | Yes — Foobara looks up the record |
+
+---
+
+## Defining an Entity
+
+```ruby
+class Capybara < Foobara::Entity
+  attributes do
+    id       :integer
+    name     :string,  :required, "Official name"
+    nickname :string,             "Informal name for friends"
+    age      :integer, :required, "The number of times this capybara has gone around the sun"
+  end
+
+  primary_key :id
+end
+```
+
+The `primary_key` declaration tells Foobara which attribute uniquely identifies each record. The framework auto-increments integer primary keys when you use the built-in CRUD drivers.
+
+---
+
+## CRUD Drivers
+
+A CRUD driver is the bridge between entity operations and a specific storage backend. You assign one as the default before running any commands.
+
+<Tabs>
+  <Tab title="InMemory (built-in)">
+    Records live in process memory. Perfect for tests, prototypes, and scripts. Data is lost when the process exits.
+
+    ```ruby
+    require "foobara"
+
+    crud_driver = Foobara::Persistence::CrudDrivers::InMemory.new
+    Foobara::Persistence.default_crud_driver = crud_driver
+    ```
+  </Tab>
+  <Tab title="LocalFiles (gem)">
+    Records are written to a YAML file on disk. Simple persistence that survives process restarts — good for local development and demos.
+
+    ```bash
+    gem install foobara-local-files-crud-driver
+    ```
+
+    ```ruby
+    require "foobara/local_files_crud_driver"
+
+    crud_driver = Foobara::LocalFilesCrudDriver.new
+    Foobara::Persistence.default_crud_driver = crud_driver
+    ```
+
+    After creating some records you will find a `local_data/records.yml` file:
+
+    ```yaml
+    ---
+    capybara:
+      sequence: 4
+      records:
+        1:
+          :name: Fumiko
+          :nickname: foo
+          :age: 100
+          :id: 1
+        2:
+          :name: Barbara
+          :nickname: bar
+          :age: 200
+          :id: 2
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+The CRUD driver must be set **before** any entity class is used in a command. `Foobara::Persistence.default_crud_driver=` raises if you try to set it a second time.
+</Note>
+
+---
+
+## Entity Operations Inside Commands
+
+### Creating records
+
+Use `Entity.create(attributes)` inside a command's execute phase. The `attributes_for_create` helper on the entity class generates an `inputs` declaration that automatically excludes the primary key (which is assigned by the driver).
+
+```ruby
+class CreateCapybara < Foobara::Command
+  description "Just creates a capybara!"
+
+  inputs Capybara.attributes_for_create
+  result Capybara
+
+  def execute
+    create_capybara
+
+    capybara
+  end
+
+  attr_accessor :capybara
+
+  def create_capybara
+    self.capybara = Capybara.create(inputs)
+  end
+end
+```
+
+```ruby
+fumiko = CreateCapybara.run!(name: "Fumiko", nickname: "foo", age: 100)
+# => <Capybara:1>
+fumiko.id   # => 1
+```
+
+### Loading records
+
+Use `Entity.load(id)` to fetch a record by its primary key. The entity class exposes `primary_key_type` so you can declare the input type without hard-coding it.
+
+```ruby
+class FindCapybara < Foobara::Command
+  inputs do
+    id Capybara.primary_key_type, :required
+  end
+
+  result Capybara
+
+  def execute
+    load_capybara
+
+    capybara
+  end
+
+  attr_accessor :capybara
+
+  def load_capybara
+    self.capybara = Capybara.load(id)
+  end
+end
+```
+
+```ruby
+basil = FindCapybara.run!(id: 3)
+basil.age   # => 300
+```
+
+---
+
+## Passing a Primary Key Where an Entity Is Expected
+
+Foobara automatically resolves integer (or other primary key type) values into loaded entity instances when the declared type is an entity. This means you can pass a raw id wherever a `Capybara` is expected:
+
+```ruby
+class IncrementAge < Foobara::Command
+  inputs do
+    capybara Capybara, :required
+  end
+
+  result Capybara
+
+  def execute
+    increment_age
+    capybara
+  end
+
+  def increment_age
+    capybara.age += 1
+  end
+end
+
+# Pass the integer id — Foobara loads the record automatically
+IncrementAge.run!(capybara: 3)
+# => <Capybara:3>
+```
+
+---
+
+## Transactions
+
+Entity reads and writes inside commands are automatically wrapped in a **transaction**. Foobara commits the transaction when the command succeeds and rolls it back when it fails, keeping your data consistent without any manual transaction management.
+
+```ruby
+fumiko = CreateCapybara.run!(name: "Fumiko", nickname: "foo", age: 100)
+# => <Capybara:1>   — transaction committed, record on disk
+
+# Re-run the script and load the persisted record
+basil = FindCapybara.run!(id: 3)
+basil.age   # => 301   — state from a previous run, still there
+```
+
+<Tip>
+Because every command manages its own transaction, you should generally avoid creating entities outside of commands. If you need to work with entities in tests or a console, open a transaction manually with `Foobara::Persistence.transaction(Capybara) { ... }`.
+</Tip>
+
+---
+
+## Full Example: Create and Find
+
+The following two commands — taken directly from the README — form the core of a simple capybara record store:
+
+```ruby
+require "foobara"
+require "foobara/local_files_crud_driver"
+
+crud_driver = Foobara::LocalFilesCrudDriver.new
+Foobara::Persistence.default_crud_driver = crud_driver
+
+class Capybara < Foobara::Entity
+  attributes do
+    id       :integer
+    name     :string,  :required, "Official name"
+    nickname :string,             "Informal name for friends"
+    age      :integer, :required, "The number of times this capybara has gone around the sun"
+  end
+
+  primary_key :id
+end
+
+class CreateCapybara < Foobara::Command
+  description "Just creates a capybara!"
+
+  inputs Capybara.attributes_for_create
+  result Capybara
+
+  def execute
+    create_capybara
+    capybara
+  end
+
+  attr_accessor :capybara
+
+  def create_capybara
+    self.capybara = Capybara.create(inputs)
+  end
+end
+
+class FindCapybara < Foobara::Command
+  inputs do
+    id Capybara.primary_key_type, :required
+  end
+
+  result Capybara
+
+  def execute
+    load_capybara
+    capybara
+  end
+
+  attr_accessor :capybara
+
+  def load_capybara
+    self.capybara = Capybara.load(id)
+  end
+end
+
+# Session 1 — create records
+CreateCapybara.run!(name: "Fumiko",  nickname: "foo", age: 100)  # => <Capybara:1>
+CreateCapybara.run!(name: "Barbara", nickname: "bar", age: 200)  # => <Capybara:2>
+CreateCapybara.run!(name: "Basil",   nickname: "baz", age: 300)  # => <Capybara:3>
+
+# Session 2 — load and modify
+basil = FindCapybara.run!(id: 3)
+basil.age   # => 300
+
+IncrementAge.run!(capybara: 3)
+FindCapybara.run!(id: 3).age   # => 301
+```
+
+<Accordion title="Custom CRUD drivers">
+  For production workloads — PostgreSQL, Redis, legacy databases — you can write a custom CRUD driver by subclassing `Foobara::Persistence::EntityAttributesCrudDriver` and implementing its abstract CRUD operations. Custom drivers let you present a clean entity model over a messy underlying schema.
+</Accordion>

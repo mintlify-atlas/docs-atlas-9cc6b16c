@@ -1,20 +1,83 @@
 ---
-title: "Introduction"
-description: "Welcome to your project"
+title: "Foobara: Command-Centric Ruby Framework"
+sidebarTitle: "Home"
+description: "Foobara is a discoverable, command-centric Ruby framework. Write domain logic once as Commands and expose it over HTTP, CLI, MCP, or async jobs automatically."
 ---
 
-Write a short description of your product here. What it does, who it's for, and what they can accomplish with it.
+Foobara is a Ruby framework built around a single powerful idea: every domain operation is a **Command**. Commands carry formal, machine-readable metadata about their inputs, outputs, and errors — making your entire system discoverable. That discoverability lets Foobara abstract away integration code so you write your domain logic once and use it from anywhere: a Rack API, a Rails route, a shell CLI, a Model Context Protocol server, an async job queue, or a remote TypeScript client.
 
-<Tip>
-  Ready to make this your own? Start by editing this page. Update your `docs.json` file to customize your site. Then fill out the [Quickstart](/quickstart) page.
-</Tip>
+<CardGroup cols={2}>
+  <Card title="Introduction" icon="book-open" href="/introduction">
+    Understand what Foobara is, why it's command-centric, and how discoverability changes the way you build software.
+  </Card>
+  <Card title="Installation" icon="gem" href="/installation">
+    Add the foobara gem to your project or generate a brand-new Ruby project with the foob CLI.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build a working Foobara command, expose it over HTTP and the CLI, and interact with it — all in minutes.
+  </Card>
+  <Card title="Core Concepts" icon="layer-group" href="/concepts/commands">
+    Deep-dive into Commands, Domains, Organizations, Types, Models, Entities, and Errors.
+  </Card>
+</CardGroup>
 
-<Card title="Quickstart" icon="rocket" href="/quickstart">
-  This card links to the quickstart page in your project.
-</Card>
-<Card title="Components" icon="puzzle-piece" href="https://mintlify.com/docs/components">
-  Add cards, callouts, steps, tabs, and more to design and structure your pages.
-</Card>
-<Card title="Settings" icon="gear" href="https://mintlify.com/docs/organize/settings">
-  Set your site name, branding, and navigation in the `docs.json` file.
-</Card>
+## Why Foobara?
+
+Traditional applications scatter business logic across controllers, jobs, service objects, and serializers. When you need to expose that logic through a new channel — say, an MCP tool or an async worker — you write more glue code, often duplicating validation and error handling.
+
+Foobara solves this by making **Commands** the single source of truth for every domain operation:
+
+<CardGroup cols={3}>
+  <Card title="Discoverable by Design" icon="magnifying-glass">
+    Every command, type, and error exposes a machine-readable manifest. Tooling can introspect your system without reading source code.
+  </Card>
+  <Card title="Zero-Glue Connectors" icon="plug">
+    Connect any command to HTTP, CLI, MCP, Resque, or a cron scheduler with a single `connect` call — no glue code required.
+  </Card>
+  <Card title="Remote Commands" icon="network-wired">
+    Import commands from another service over HTTP. Calling code is identical whether the command runs locally or remotely.
+  </Card>
+  <Card title="Rich Type System" icon="shapes">
+    Built-in types (integer, string, date, model, entity…) with composable validators and transformers. Define custom types once, reuse everywhere.
+  </Card>
+  <Card title="Domain Mappers" icon="arrows-left-right">
+    Translate concepts between domains without polluting command logic with foreign mental models.
+  </Card>
+  <Card title="Code Generators" icon="wand-magic-sparkles">
+    Scaffold Ruby projects, TypeScript React frontends, remote command imports, and UI forms with the `foob` CLI.
+  </Card>
+</CardGroup>
+
+## Get Started
+
+<Steps>
+  <Step title="Install Foobara">
+    Add `gem "foobara"` to your Gemfile and run `bundle install`, or generate a full project with `foob generate ruby-project --name your-org/your-project`.
+  </Step>
+  <Step title="Write your first Command">
+    Subclass `Foobara::Command`, declare typed inputs with the `inputs` DSL, a `result` type, and implement `#execute`.
+  </Step>
+  <Step title="Connect it to the outside world">
+    Choose a connector — Rack, Rails, CLI, or MCP — call `connector.connect(YourCommand)`, and you're live.
+  </Step>
+  <Step title="Explore discoverability">
+    Hit `/manifest` on your running server or call `.foobara_manifest` in code to see the full machine-readable description of your system.
+  </Step>
+</Steps>
+
+## Explore the Docs
+
+<CardGroup cols={2}>
+  <Card title="Command Connectors" icon="share-nodes" href="/connectors/overview">
+    Expose commands over HTTP, CLI, MCP, async jobs, and scheduled tasks.
+  </Card>
+  <Card title="Advanced Topics" icon="graduation-cap" href="/advanced/discoverability-and-manifests">
+    Manifests, remote commands, domain mappers, subcommands, custom types, callbacks, and transactions.
+  </Card>
+  <Card title="Tooling & Generators" icon="screwdriver-wrench" href="/tooling/code-generators">
+    Use the foob CLI to generate projects, commands, types, connectors, and TypeScript integrations.
+  </Card>
+  <Card title="TypeScript Integration" icon="brands ts" href="/tooling/typescript-integration">
+    Generate TypeScript SDKs and React command forms from your Foobara backend's manifest.
+  </Card>
+</CardGroup>

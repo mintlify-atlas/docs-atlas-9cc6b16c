@@ -1,0 +1,99 @@
+{
+  "projectType": "framework",
+  "projectName": "Foobara",
+  "projectDescription": "A command-centric, discoverable Ruby framework that encapsulates domain operations in commands with machine-readable metadata, abstracting away integration code for HTTP, CLI, MCP, and more.",
+  "theme": "palm",
+  "primaryColor": "#283618",
+  "lightColor": "#000000",
+  "darkColor": "#998c5f",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/commands",
+              "concepts/organizations-and-domains",
+              "concepts/types-and-models",
+              "concepts/entities",
+              "concepts/errors"
+            ]
+          },
+          {
+            "group": "Command Connectors",
+            "pages": [
+              "connectors/overview",
+              "connectors/http",
+              "connectors/cli",
+              "connectors/mcp",
+              "connectors/async-and-scheduler"
+            ]
+          },
+          {
+            "group": "Advanced Topics",
+            "pages": [
+              "advanced/discoverability-and-manifests",
+              "advanced/remote-commands",
+              "advanced/domain-mappers",
+              "advanced/subcommands",
+              "advanced/custom-types",
+              "advanced/callbacks-and-transactions"
+            ]
+          },
+          {
+            "group": "Tooling",
+            "pages": [
+              "tooling/code-generators",
+              "tooling/typescript-integration",
+              "tooling/contributing"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Command-centric architecture: domain operations encapsulated as first-class Command objects",
+    "Discoverability: machine-readable manifests for all commands, types, and errors",
+    "Command connectors: expose any command over HTTP (Rack/Rails), CLI, MCP, async (Resque), or scheduled jobs with zero glue code",
+    "Remote commands: import commands from other services and call them with the same interface as local commands",
+    "Domain mappers: translate concepts between domains to keep command logic clean",
+    "Rich type system: built-in types (integer, string, boolean, date, datetime, model, entity, array, etc.) with composable validators and transformers",
+    "Entities with CRUD drivers: persist domain models using swappable backends (InMemory, LocalFiles, Redis, custom)",
+    "Organizations and Domains: hierarchical namespaces enforcing unidirectional dependency graphs",
+    "Code generators via the foob CLI: scaffold Ruby projects, TypeScript React frontends, remote command imports, and UI forms",
+    "Monorepo with sub-projects: command, typesystem, entities, manifest, domain_mapper, command_connectors"
+  ],
+  "publicApiSurface": [
+    "Foobara::Command — base class for all commands (.run, .run!, #run, #run!, #execute, inputs DSL, result DSL, depends_on, possible_error, possible_input_error, run_subcommand!, run_mapped_subcommand!)",
+    "Foobara::Model — base class for value objects with attributes DSL",
+    "Foobara::Entity — base class for persistent domain objects with primary_key, CRUD driver support",
+    "Foobara::Persistence / CrudDrivers::InMemory — default persistence layer",
+    "Module#foobara_domain! — declares a Ruby module as a Foobara Domain",
+    "Module#foobara_organization! — declares a Ruby module as a Foobara Organization",
+    "Module#foobara_register_type — registers a named custom type on a domain",
+    "Module#foobara_depends_on — declares unidirectional domain dependency",
+    "Foobara::CommandConnector#connect — registers commands/orgs/domains for exposure",
+    "Foobara::CommandConnector#foobara_manifest — returns machine-readable system metadata",
+    "Foobara::CommandConnectors::Http::Rack — Rack-based HTTP connector",
+    "Foobara::CommandConnectors::RailsCommandConnector — Rails router integration",
+    "Foobara::CommandConnectors::ShCliConnector — shell CLI connector",
+    "Foobara::McpConnector — Model Context Protocol (MCP) connector",
+    "Foobara::CommandConnectors::ResqueConnector — async Resque connector",
+    "Foobara::CommandConnectors::ResqueSchedulerConnector — cron/scheduled job connector",
+    "Foobara::RemoteImports::ImportCommand — import commands from a remote manifest URL",
+    "Foobara::DomainMapper — base class for cross-domain type/model translation",
+    "Foobara::Outcome — result object with #success?, #result, #errors, #errors_sentence, #errors_hash",
+    "foob CLI — code generator tool (generate ruby-project, command, domain, organization, type, typescript-react-project, typescript-remote-commands, typescript-react-command-form, rack-connector, sh-cli-connector, resque-connector, etc.)"
+  ]
+}

@@ -1,0 +1,180 @@
+---
+title: "Discoverability and Manifests in Foobara"
+sidebarTitle: "Manifests"
+description: "Learn how Foobara's machine-readable manifests expose commands, types, and errors — enabling tooling, code generators, and remote imports."
+---
+
+Foobara is designed around the idea that a system should be able to describe itself. Every command, type, domain, organization, and connector carries a machine-readable manifest — a structured Ruby hash that exposes inputs, outputs, possible errors, and dependency metadata. This formal self-description is what Foobara calls **discoverability**, and it is the foundation for features like HTTP connectors, CLI help text, remote command imports, TypeScript SDK generation, and MCP tool exposure.
+
+## What Discoverability Means
+
+In most frameworks, integrations like HTTP routing, CLI argument parsing, or async job queuing require you to write glue code that duplicates knowledge about your domain operations. Foobara eliminates that duplication by generating all integration code from the manifest. Because commands advertise their own shape, any connector (HTTP, CLI, MCP, Resque) can introspect them and wire everything up automatically — including help text, type coercion, error serialization, and routing.
+
+The same manifest data can be transmitted over the network so that a second Ruby service (or a TypeScript frontend) can import your commands and use them as if they were defined locally.
+
+## The `foobara_manifest` Method
+
+`foobara_manifest` is available on individual Foobara concepts as well as on connectors:
+
+```ruby
+# On a type (entity, model, or primitive)
+Capybara.foobara_manifest
+
+# On a command class
+FindCapybara.foobara_manifest
+
+# On a domain module
+FoobaraDemo::CapyCafe.foobara_manifest
+
+# On a connector — returns the complete manifest for all exposed commands
+command_connector.foobara_manifest
+```
+
+### Entity Manifest Example
+
+Calling `foobara_manifest` on the `Capybara` entity returns a hash describing its attributes, primary key, and organizational location:
+
+```ruby
+Capybara.foobara_manifest
+# =>
+# {
+#   attributes_type: {
+#     type: :attributes,
+#     element_type_declarations: {
+#       id:       { type: :integer },
+#       name:     { description: "Official name",                                      type: :string  },
+#       nickname: { description: "Informal name for friends",                          type: :string  },
+#       age:      { description: "The number of times this capybara has gone around the sun", type: :integer }
+#     },
+#     required: [:name, :age]
+#   },
+#   organization_name: "global_organization",
+#   domain_name:       "global_domain",
+#   model_name:        "Capybara",
+#   model_base_class:  "Foobara::Entity",
+#   model_class:       "Capybara",
+#   entity_name:       "Capybara",
+#   primary_key_attribute: :id
+# }
+```
+
+## Connector-Level Manifests
+
+When you call `foobara_manifest` on a command connector, you get a complete, top-level index of every concept the connector exposes.
+
+### Listing Exposed Commands
+
+```ruby
+require "foobara/command_connectors"
+
+connector = Foobara::CommandConnector.new
+connector.connect(CreateCapybara)
+connector.connect(FindCapybara)
+connector.connect(IncrementAge)
+
+connector.foobara_manifest[:command].keys
+# => [:CreateCapybara, :FindCapybara, :IncrementAge]
+```
+
+### Top-Level Manifest Keys
+
+The connector manifest is partitioned into seven categories, each an index of registered concepts:
+
+```ruby
+connector.foobara_manifest.keys.sort
+# => [:command, :domain, :error, :organization, :processor, :processor_class, :type]
+```
+
+| Key | What it contains |
+|---|---|
+| `:command` | All exposed command classes and their inputs/result/errors |
+| `:type` | All types referenced by exposed commands (entities, models, custom types) |
+| `:error` | All possible errors including custom error classes |
+| `:domain` | Domain modules and their dependencies |
+| `:organization` | Organization modules |
+| `:processor` | Low-level value processors (validators, transformers, casters) |
+| `:processor_class` | Processor class metadata |
+
+### Error Metadata Example
+
+Custom errors surface in the connector manifest, complete with their parent command and context schema:
+
+```ruby
+connector.connect(Divide)
+
+connector.foobara_manifest[:command][:Divide][:possible_errors]["data.divisor.divide_by_zero"][:error]
+# => "Divide::DivideByZeroError"
+
+connector.foobara_manifest[:error][:"Divide::DivideByZeroError"][:parent]
+# => [:command, "Divide"]
+```
+
+## The `/manifest` HTTP Endpoint
+
+Every HTTP command connector (Rack or Rails) automatically serves the full manifest at `/manifest`. You can inspect it with a plain `curl`:
+
+```bash
+curl http://localhost:9292/manifest
+```
+
+The response is a JSON serialisation of the same hash returned by `connector.foobara_manifest`. This endpoint is the entry point for remote command imports, TypeScript SDK generation, and any external tooling that needs to understand your system.
+
+<Note>
+  The `/manifest` endpoint is unauthenticated by default. If your commands are behind authentication, review your connector configuration before exposing the endpoint in production.
+</Note>
+
+## How Manifests Enable Tooling
+
+<CardGroup cols={2}>
+  <Card title="Remote Command Imports" icon="arrow-down-to-bracket">
+    A second Ruby service calls `Foobara::RemoteImports::ImportCommand.run!(manifest_url:)` and receives proxy classes for every command, type, and error in the manifest. See [Remote Commands](/advanced/remote-commands) for the full walkthrough.
+  </Card>
+  <Card title="TypeScript SDK Generation" icon="code">
+    The `foob` CLI reads `/manifest` and generates fully-typed TypeScript command classes, models, and error types so frontend code never drifts from the backend.
+  </Card>
+  <Card title="CLI Help Text" icon="terminal">
+    The shell CLI connector reads input declarations from the manifest to produce usage strings and argument parsers automatically — no extra config needed.
+  </Card>
+  <Card title="MCP Tool Exposure" icon="robot">
+    The MCP connector turns each command's manifest entry into an MCP tool description, letting AI agents discover and invoke your domain operations without any hand-written schema.
+  </Card>
+</CardGroup>
+
+## Programmatic Manifest Inspection
+
+The `Foobara::Manifest` library provides typed wrapper objects around the raw hash so tooling code can navigate the manifest without string-munging:
+
+```ruby
+require "foobara/manifest"
+
+root = Foobara::Manifest::RootManifest.new(connector.foobara_manifest)
+
+root.commands.map(&:full_command_name)
+# => ["CreateCapybara", "FindCapybara", "IncrementAge"]
+
+cmd = root.command_by_name(:FindCapybara)
+cmd.inputs_type       # => Foobara::Manifest::Attributes
+cmd.result_type       # => Foobara::Manifest::TypeDeclaration
+cmd.possible_errors   # => Hash of key => Foobara::Manifest::PossibleError
+```
+
+<Tip>
+  The `Foobara::Manifest::RootManifest` class is the same entry point used by code generators and the remote import toolchain. Reading its source at `projects/manifest/src/root_manifest.rb` is a great starting point if you want to build your own manifest-driven tooling.
+</Tip>
+
+## Summary
+
+<Steps>
+  <Step title="Commands advertise themselves">
+    Every command, type, domain, and organization automatically generates a manifest hash. No annotation or configuration is required beyond the normal DSL.
+  </Step>
+  <Step title="Connectors aggregate the manifest">
+    Calling `connector.foobara_manifest` produces a single nested hash covering all exposed concepts across the seven top-level categories.
+  </Step>
+  <Step title="The /manifest endpoint serves it over HTTP">
+    HTTP connectors expose the raw manifest as JSON at `/manifest`, making it accessible to any consumer — Ruby, TypeScript, or otherwise.
+  </Step>
+  <Step title="Tooling consumes the manifest">
+    Remote imports, code generators, CLI parsers, MCP tool registrations, and documentation generators all derive from the same manifest. Update your command and every consumer updates automatically.
+  </Step>
+</Steps>

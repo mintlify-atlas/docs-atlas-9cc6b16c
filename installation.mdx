@@ -1,0 +1,164 @@
+---
+title: "Installing Foobara and the foob CLI Tool"
+sidebarTitle: "Installation"
+description: "Set up the foobara gem in a new or existing Ruby project, install optional connector gems, and get the foob code-generator CLI running in minutes."
+---
+
+Getting Foobara running takes only a few lines. You can drop it into an existing Ruby project as a service-objects layer or scaffold a brand-new project with the `foob` CLI generator. This page covers both paths, plus the optional connector and persistence gems you'll want as your project grows.
+
+<Note>
+  The `foob` CLI is a **separate gem** from `foobara`. The `foobara` gem is the runtime framework you add to your app; `foob` is a standalone command-line tool used only during development to scaffold projects and generate files. You do not need `foob` to run a Foobara application.
+</Note>
+
+## Prerequisites
+
+Foobara requires **Ruby >= 3.4.0 and < 4.1** (as declared in `version.rb`). Make sure your local Ruby version satisfies this constraint before proceeding:
+
+```bash
+ruby --version
+# ruby 3.4.x (...)
+```
+
+If you manage Ruby versions with `rbenv` or `rvm`, select a 3.4+ version for your project.
+
+## Installation Steps
+
+<Steps>
+  ### Add foobara to your project
+
+  **Existing app with a Gemfile** — add the gem and run `bundle install`:
+
+  ```ruby
+  # Gemfile
+  gem "foobara"
+  ```
+
+  ```bash
+  bundle install
+  ```
+
+  **Library or gem with a `.gemspec`** — declare it as a runtime dependency:
+
+  ```ruby
+  # your-gem.gemspec
+  spec.add_dependency "foobara"
+  ```
+
+  Then run `bundle install` as usual.
+
+  ### Verify the installation
+
+  Open a Ruby console in your project and require foobara:
+
+  ```ruby
+  require "foobara"
+
+  class Hello < Foobara::Command
+    result :string
+
+    def execute
+      "Hello from Foobara #{Foobara::Version::VERSION}!"
+    end
+  end
+
+  puts Hello.run!
+  # => Hello from Foobara 0.6.4!
+  ```
+
+  If this prints without errors, the core gem is installed correctly.
+
+  ### Install the foob CLI (optional, recommended)
+
+  `foob` is a code-generation CLI that can scaffold new projects, generate commands, domains, types, connectors, and even TypeScript React frontends — all from manifest metadata.
+
+  ```bash
+  gem install foob
+  ```
+
+  Confirm it is working:
+
+  ```bash
+  foob --help
+  ```
+
+  To scaffold a brand-new Ruby Foobara project:
+
+  ```bash
+  foob generate ruby-project --name your-org/your-new-project-name
+  ```
+
+  To scaffold a TypeScript/React frontend:
+
+  ```bash
+  foob generate typescript-react-project --project-dir your-org/your-frontend-name
+  ```
+
+  ### Install optional connector gems
+
+  Foobara ships without any connectors bundled so you only pull in what you actually use. Install the gems for the transports your project needs:
+
+  <CodeGroup>
+    ```bash HTTP (Rack)
+    gem install foobara-rack-connector
+    ```
+
+    ```bash CLI (Bash/Shell)
+    gem install foobara-sh-cli-connector
+    ```
+
+    ```bash File-based persistence
+    gem install foobara-local-files-crud-driver
+    ```
+
+    ```bash Remote command imports
+    gem install foobara-remote-imports
+    ```
+  </CodeGroup>
+
+  Or add whichever you need to your Gemfile:
+
+  ```ruby
+  # Gemfile
+  gem "foobara"
+  gem "foobara-rack-connector"         # expose commands over HTTP via Rack/Puma
+  gem "foobara-sh-cli-connector"       # expose commands as a CLI tool
+  gem "foobara-local-files-crud-driver" # persist entities to a local YAML file
+  gem "foobara-remote-imports"         # import commands from a remote Foobara service
+  ```
+
+</Steps>
+
+## Optional Connector Gems Reference
+
+| Gem | Purpose |
+|---|---|
+| `foobara-rack-connector` | Wraps commands behind a Rack-compatible HTTP server (works with Puma, Unicorn, etc.) |
+| `foobara-sh-cli-connector` | Exposes commands as a shell CLI with auto-generated `--help` output |
+| `foobara-local-files-crud-driver` | Persists entity records to a local YAML file — useful for development and scripts |
+| `foobara-remote-imports` | Imports commands, types, and errors from a running Foobara backend over HTTP |
+
+<Tip>
+  Additional connector gems — Rails, MCP, Resque async, Resque scheduler, Redis CRUD driver, and more — are available as separate gems in the [foobara GitHub organization](https://github.com/orgs/foobara/repositories). Browse the repositories prefixed with `foobara-` to find connectors for your stack.
+</Tip>
+
+## Generating Remote TypeScript Commands
+
+Once you have a running Foobara backend, you can generate a typed TypeScript SDK for it with a single command:
+
+```bash
+foob generate typescript-remote-commands \
+  --manifest-url http://your.foobara.ruby.backend/manifest
+```
+
+And scaffold a React form for any command:
+
+```bash
+foob generate typescript-react-command-form \
+  --command-name SomeOrg::SomeDomain::SomeCommand
+```
+
+Both rely on the manifest your Foobara server exposes at `/manifest` — no extra configuration needed.
+
+<Warning>
+  The `foob` CLI requires a **running** Foobara backend to import remote commands or generate forms. Make sure your server is accessible at the URL you pass to `--manifest-url` before running these generators.
+</Warning>

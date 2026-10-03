@@ -1,0 +1,224 @@
+---
+title: "Contributing to Foobara: Code, Docs, and Issues"
+sidebarTitle: "Contributing"
+description: "Learn how to set up a local dev environment, run the test suite, and submit pull requests to the Foobara monorepo."
+---
+
+Foobara welcomes contributions at every skill level. Whether you want to fix a bug, improve documentation, add a new feature, or simply open an issue to report unexpected behaviour, every bit of help is valued. If you are not sure where to start, reach out at [miles@foobara.org](mailto:miles@foobara.org) — contributions from absolute beginners are explicitly encouraged.
+
+## Ways to Contribute
+
+<CardGroup cols={3}>
+  <Card title="Write Code" icon="code">
+    Fix bugs, add features, or improve existing implementations. The codebase covers all skill levels.
+  </Card>
+  <Card title="Improve Docs" icon="book">
+    There is always room for clearer explanations, better examples, and new guides.
+  </Card>
+  <Card title="Open Issues" icon="circle-exclamation">
+    Report bugs or suggest improvements directly on GitHub. A well-described issue is a real contribution.
+  </Card>
+</CardGroup>
+
+---
+
+## Setting Up Your Local Environment
+
+<Steps>
+
+### Fork and Clone the Repository
+
+Fork the repository on GitHub, then clone your fork:
+
+```bash
+git clone git@github.com:${your_github_username}/foobara.git
+```
+
+Create a new branch for your work:
+
+```bash
+git checkout -b your-branch-name
+cd foobara
+```
+
+### Install Ruby
+
+Foobara requires Ruby `>= 3.4.0, < 4.1`. If you need help installing the right version, the project recommends [mise](https://mise.jdx.dev):
+
+```bash
+# Install mise (Linux/WSL)
+sudo apt update -y && sudo apt install -y gpg wget build-essential \
+  libssl-dev zlib1g-dev libreadline-dev libyaml-dev libxml2-dev \
+  libxslt1-dev libffi-dev libgdbm-dev autoconf bison
+
+wget -qO - https://mise.jdx.dev/gpg-key.pub | gpg --dearmor | \
+  sudo tee /etc/apt/keyrings/mise-archive-keyring.gpg 1> /dev/null
+
+echo "deb [signed-by=/etc/apt/keyrings/mise-archive-keyring.gpg arch=amd64] \
+  https://mise.jdx.dev/deb stable main" | \
+  sudo tee /etc/apt/sources.list.d/mise.list
+
+sudo apt update && sudo apt install -y mise
+
+# Install and activate the required Ruby version
+mise use -g ruby@3.4
+echo 'eval "$(mise activate bash)"' >> ~/.bashrc
+```
+
+### Install Dependencies
+
+```bash
+bundle
+```
+
+### Run the Full Test Suite
+
+```bash
+bundle exec rake
+```
+
+If everything is green you are ready to start hacking on Foobara.
+
+</Steps>
+
+---
+
+## Monorepo Structure
+
+The main `foobara/foobara` repository is itself a **monorepo** that contains multiple sub-projects under the `projects/` directory. Two of those projects — `projects/typesystem` and `projects/entities` — are **sub-monorepos** with their own nested `projects/` directories.
+
+```
+foobara/
+├── projects/
+│   ├── typesystem/          # sub-monorepo (being decoupled for 1.0 release)
+│   │   └── projects/
+│   ├── entities/            # sub-monorepo (being extracted before 1.0)
+│   │   └── projects/
+│   └── <other-projects>/
+├── lib/
+├── src/
+├── spec/
+└── ...
+```
+
+The broader Foobara ecosystem also lives across many separate repositories at [github.com/foobara](https://github.com/orgs/foobara/repositories). Projects are periodically extracted from the monorepo into standalone gems as the project matures.
+
+### Per-Project Structure
+
+Each project inside `projects/` follows a consistent layout:
+
+- **`lib/`** — public entry points safe to `require` from outside the project
+- **`src/`** — everything else; kept off the load path to avoid pollution
+- **`spec/`** — the project's own test suite
+
+There is also a top-level `spec/` directory for integration-level tests. Code coverage is aggregated across all suites, so a failing test anywhere in the monorepo will fail the build.
+
+---
+
+## Code Quality Requirements
+
+<Warning>
+  Pull requests that fail the test suite or linter will not be merged. Make sure both pass locally before pushing.
+</Warning>
+
+### 100% Line Coverage
+
+The build requires **100% line coverage** across all test suites combined. You do not need every individual project's suite to hit 100% in isolation, but running the full `rake` task from the repository root must produce complete coverage.
+
+```bash
+bundle exec rake
+```
+
+### Linter
+
+The project uses RuboCop. It runs automatically as part of the `rake` task. To run it in isolation:
+
+```bash
+bundle exec rubocop
+```
+
+Fix any offences before opening a pull request.
+
+---
+
+## Submitting a Pull Request
+
+<Steps>
+
+### Ensure Tests and Linter Pass
+
+From the repository root:
+
+```bash
+bundle exec rake
+```
+
+Both the test suite and linter must be green.
+
+### Commit with Clean History
+
+Follow one important rule for git commits:
+
+> **Do not put a file rename and an edit to that file in the same commit.** Keep renames and edits in separate commits.
+
+This helps git tooling track history correctly and is essential for scripts like `extract-repo` to work reliably.
+
+### Open Your Pull Request
+
+Push your branch to your fork and open a pull request against the main Foobara repository on GitHub. Describe what the change does and why. Reference any related issues.
+
+</Steps>
+
+---
+
+## The `extract-repo` Script
+
+Foobara includes an `extract-repo` script that can move files from one Foobara project to another while **preserving git history**. This is useful when extracting code from the monorepo into a standalone gem, or when reorganising domain logic between projects.
+
+<Tip>
+  Following the commit rule above (rename and edit in separate commits) is critical for `extract-repo` to produce accurate history in the destination repository.
+</Tip>
+
+---
+
+## Testing Against Another Local Foobara Project
+
+If you are working on the monorepo and need to test how your changes interact with a separate Foobara gem (for example, a connector), point its `Gemfile` at your local copy using a `path:` entry:
+
+```ruby
+# In the other project's Gemfile
+gem "foobara", path: "/path/to/your/local/foobara"
+```
+
+This lets you test the integration without publishing anything.
+
+---
+
+## Additional Resources
+
+<CardGroup cols={2}>
+  <Card title="Video Tutorials" icon="play" href="https://foobara.org/videos">
+    Walkthroughs and demos at foobara.org/videos and the FoobaraFlix YouTube channel.
+  </Card>
+  <Card title="YouTube Channel" icon="youtube" href="https://www.youtube.com/@FoobaraFlix">
+    Subscribe to @FoobaraFlix for the latest screencasts and deep-dives.
+  </Card>
+  <Card title="YARD Docs (All Projects)" icon="book-open" href="https://docs.foobara.org/all/">
+    Combined API reference documentation for the entire Foobara ecosystem.
+  </Card>
+  <Card title="YARD Docs (Per Repo)" icon="book" href="https://foobara.org/docs">
+    Per-repository API docs browseable at foobara.org/docs.
+  </Card>
+</CardGroup>
+
+---
+
+## License
+
+Foobara is licensed under the **Mozilla Public License Version 2.0**. See `LICENSE.txt` in the repository root for the full text. The MPL-2.0 is a file-level copyleft licence — modifications to existing Foobara source files must be shared back, but you can freely combine Foobara with proprietary code in separate files.
+
+---
+
+## Getting Help
+
+If you are trying to build something with Foobara and have questions, or if you want to contribute but are not sure where to start, send an email to [miles@foobara.org](mailto:miles@foobara.org). Help is genuinely offered and encouraged.

@@ -1,0 +1,130 @@
+---
+title: "MCP Connector: Expose Commands to AI Agents via MCP"
+sidebarTitle: "MCP"
+description: "Expose Foobara commands as an MCP stdio server so AI assistants like Claude Code can discover and call them directly using the Model Context Protocol."
+---
+
+The Model Context Protocol (MCP) is an open standard that lets AI assistants discover and invoke tools at runtime. Because every Foobara command already has a formal, machine-readable manifest — inputs, result type, descriptions, possible errors — each command maps naturally to an MCP tool with no extra configuration. The MCP connector bridges the two: spin up an MCP stdio server and your commands are immediately available to any MCP-compatible client.
+
+## Why MCP and Foobara fit together
+
+MCP tools need a schema describing what inputs they accept and what they return. Foobara commands already have exactly that schema baked in. The connector reads the manifest and registers each command as an MCP tool automatically — you do not write tool definitions, input schemas, or handler functions. The same domain logic that powers your HTTP API, CLI, and async jobs is the logic an AI assistant calls.
+
+## Installation
+
+```bash
+gem install foobara-mcp-connector
+```
+
+Require path: `foobara/mcp_connector`  
+Class: `Foobara::McpConnector`
+
+## Setup
+
+```ruby
+require "foobara/mcp_connector"
+
+mcp_connector = Foobara::McpConnector.new
+
+mcp_connector.connect(FindAllCapybaras)
+mcp_connector.connect(UpdateCapybara)
+
+mcp_connector.run_stdio_server
+```
+
+Call `run_stdio_server` at the end of the script. This starts a blocking stdio loop that speaks the MCP wire protocol — exactly what MCP clients like Claude Code, Cursor, and others expect when they launch an MCP server process.
+
+## Full example: finding and fixing bad data with Claude Code
+
+The following example shows MCP in practice. Three capybara records are created, but one has a birth year entered incorrectly — `19` instead of `2019`. The commands `FindAllCapybaras` and `UpdateCapybara` are exposed over MCP, and Claude Code is asked to find and fix the problem.
+
+**Setup script:**
+
+```ruby
+CreateCapybara.run!(name: "Fumiko",  year_of_birth: 2020)
+# Simulate a year accidentally entered with a 2-digit format:
+CreateCapybara.run!(name: "Barbara", year_of_birth: 19)
+CreateCapybara.run!(name: "Basil",   year_of_birth: 2021)
+
+mcp_connector = Foobara::McpConnector.new
+
+mcp_connector.connect(FindAllCapybaras)
+mcp_connector.connect(UpdateCapybara)
+
+mcp_connector.run_stdio_server
+```
+
+**Claude Code session:**
+
+```
+$ claude
+> Hi! There's a Capybara whose birth year was entered incorrectly. Can you find which one
+  and fix it? Thanks!
+
+● I'll help find and fix the capybara with the incorrect birth year. Let me search for the
+  capybaras first.
+
+● mcp-test:FindAllCapybaras (MCP)()…
+  ⎿  [
+       {
+         "name": "Fumiko",
+         "year_of_birth": 2020,
+         "id": 1
+
+     … +7 lines (ctrl+r to expand)
+
+         "name": "Basil",
+         "year_of_birth": 2021,
+         "id": 3
+       }
+     ]
+
+● It looks like Barbara (id 2) has an incorrect birth year of 19, which is too low. Let me
+  fix that to 2019.
+
+● mcp-test:UpdateCapybara (MCP)(id: 2, year_of_birth: 2019)…
+  ⎿  {
+       "name": "Barbara",
+       "year_of_birth": 2019,
+       "id": 2
+     }
+
+● Fixed! Barbara's birth year has been updated from 19 to 2019.
+
+> Great! Thanks!
+
+● You're welcome!
+```
+
+Claude Code called `FindAllCapybaras` with no inputs, inspected the results, identified the anomaly, and called `UpdateCapybara` with the correct value — all without any custom tool definitions or glue code.
+
+<Note>
+  The AI assistant receives the same type metadata that powers validation everywhere else in Foobara. If an LLM passes a value of the wrong type, it gets back a structured Foobara error with a clear message, just like any other caller would.
+</Note>
+
+## How it works
+
+<Steps>
+  <Step title="Connector reads command manifests">
+    On startup, `McpConnector` calls `foobara_manifest` on each connected command and converts the input/result type declarations into MCP tool schemas.
+  </Step>
+  <Step title="MCP client discovers tools">
+    When an AI assistant starts a conversation, it queries the server for available tools. It receives the list of commands with their descriptions and input schemas.
+  </Step>
+  <Step title="AI calls a tool">
+    The AI sends a tool-call request with typed inputs. The connector runs the corresponding command and returns the serialized result or error.
+  </Step>
+  <Step title="AI interprets the response">
+    The result is returned as structured JSON. The AI can call more tools, summarize results, or ask follow-up questions — all within the same session.
+  </Step>
+</Steps>
+
+<Tip>
+  Giving your commands clear `description` strings pays off doubly with MCP — those descriptions appear in the tool list that the AI uses to decide which tool to call. A well-described command is more likely to be invoked correctly.
+</Tip>
+
+## Further reading
+
+For configuration options, authentication, and advanced setup, see the connector's own documentation:
+
+**GitHub:** [https://github.com/foobara/mcp-connector](https://github.com/foobara/mcp-connector)

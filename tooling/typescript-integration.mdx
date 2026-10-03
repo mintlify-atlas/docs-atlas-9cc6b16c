@@ -1,0 +1,168 @@
+---
+title: "TypeScript Integration via Manifest-Driven Code Generation"
+sidebarTitle: "TypeScript"
+description: "Generate TypeScript types, command proxies, error classes, and React forms directly from a live Foobara backend manifest."
+---
+
+Because every Foobara backend exposes a machine-readable manifest at `/manifest`, the `foob` CLI can inspect a running Ruby server and generate a fully-typed TypeScript SDK — including command proxies, domain types, error classes, and React form components — without you writing a single line of glue code by hand. The generated TypeScript remote commands share the same interface as their Ruby counterparts, so calling code never needs to change when you move domain logic between systems.
+
+<Note>
+  Video walkthroughs and additional learning resources are available at [foobara.org](https://foobara.org) and [youtube.com/@FoobaraFlix](https://www.youtube.com/@FoobaraFlix).
+</Note>
+
+## Prerequisites
+
+Install the `foob` CLI gem if you haven't already:
+
+```bash
+gem install foob
+```
+
+You will also need a running Foobara Ruby backend that exposes the `/manifest` endpoint. Any backend using the Rack, Rails, or another HTTP connector will provide this automatically.
+
+---
+
+## Full Integration Workflow
+
+<Steps>
+
+### Scaffold a TypeScript React Project
+
+Generate a new TypeScript React frontend project with the `typescript-react-project` generator. Pass the target directory with the `-p` flag:
+
+```bash
+foob g typescript-react-project -p your-org/your-frontend
+```
+
+This produces a project pre-configured with the build tooling and folder conventions expected by the Foobara TypeScript runtime, ready to receive generated command proxies.
+
+### Start Your Ruby Backend
+
+Your Foobara backend must be reachable so `foob` can fetch its manifest. For example, boot a Rack server:
+
+```bash
+cd your-org/your-ruby-project
+bundle exec rackup
+# => Listening on http://0.0.0.0:9292
+```
+
+You can verify the manifest is live by visiting `http://localhost:9292/manifest` in a browser or running:
+
+```bash
+curl http://localhost:9292/manifest
+```
+
+### Import Remote Commands into TypeScript
+
+From inside your TypeScript project directory, run the `typescript-remote-commands` generator, pointing it at the manifest URL of your running backend:
+
+```bash
+foob g typescript-remote-commands --manifest-url http://localhost:9292/manifest
+```
+
+This reads the manifest and generates:
+
+- **TypeScript interfaces** for every domain type and entity
+- **Command proxy classes** with typed `inputs` and typed return values for every command
+- **Error classes** mirroring every possible error defined in the backend
+- **Domain and organization modules** matching the Ruby namespace structure
+
+The generated proxies have the same interface as their Ruby equivalents. If you later move a command between systems (for example, from a remote backend to a local service), calling code in TypeScript does not need to change.
+
+### Generate React Form Components
+
+For commands that need a UI, generate a React form component automatically from the command's manifest metadata:
+
+```bash
+foob g typescript-react-command-form \
+  --manifest-url http://localhost:9292/manifest \
+  --command-name YourOrg::YourDomain::YourCommand
+```
+
+The generated form component includes:
+
+- Correctly typed input fields matching the command's declared inputs
+- Built-in error display wired to the command's possible errors
+- A submit handler that calls the TypeScript command proxy
+
+This output is intentionally a starting point — you can customise it as needed.
+
+### Use Generated Code in Your React App
+
+Import the generated command proxy and form component into your application:
+
+```typescript
+import { CreateCapybara } from "./generated/commands/create_capybara";
+import { CreateCapybaraForm } from "./generated/forms/CreateCapybaraForm";
+
+// Call a command directly from TypeScript — same interface as the Ruby command
+const outcome = await CreateCapybara.run({ name: "Fumiko", age: 100 });
+
+if (outcome.success) {
+  console.log(outcome.result);
+} else {
+  console.error(outcome.errorsSentence);
+}
+```
+
+```tsx
+// Or render the auto-generated form in a component
+export function NewCapybaraPage() {
+  return <CreateCapybaraForm onSuccess={(capybara) => console.log(capybara)} />;
+}
+```
+
+### Re-generate When the Backend Changes
+
+Whenever your Ruby backend gains new commands, changes inputs, or adds error types, re-run the generator to keep your TypeScript SDK in sync:
+
+```bash
+foob g typescript-remote-commands --manifest-url http://localhost:9292/manifest
+```
+
+Because the generated files are derived entirely from the manifest, re-generation is safe and idempotent — only the parts that changed will differ.
+
+</Steps>
+
+---
+
+## What Gets Generated
+
+<CardGroup cols={2}>
+  <Card title="TypeScript Interfaces" icon="code">
+    Typed interfaces for every entity, model, and custom type defined in the backend, including nested attributes.
+  </Card>
+  <Card title="Command Proxies" icon="arrow-right-arrow-left">
+    Classes that call the corresponding HTTP endpoints, with fully typed inputs and return types inferred from the manifest.
+  </Card>
+  <Card title="Error Classes" icon="circle-exclamation">
+    Error classes matching every possible error the backend can return, so TypeScript callers can handle them with full type safety.
+  </Card>
+  <Card title="React Form Components" icon="window">
+    Ready-to-customise form components for individual commands, complete with field types, validation display, and submit wiring.
+  </Card>
+</CardGroup>
+
+---
+
+## Remote Commands Have the Same Interface as Local Commands
+
+A core design principle in Foobara is that a remote command proxy is interface-compatible with a locally implemented command. This means:
+
+- Moving domain logic from a remote backend into a local service (or vice versa) requires no changes to TypeScript calling code.
+- TypeScript consumers work with the same mental model as Ruby consumers — commands with typed inputs, a result, and typed possible errors.
+- Rearchitecting your backend services does not force a cascade of front-end refactors.
+
+<Tip>
+  The same principle applies on the Ruby side: `foob g remote-imports` generates Ruby remote commands from a manifest, giving you a Ruby SDK with the same interface as the originating commands.
+</Tip>
+
+---
+
+## Quick Reference
+
+| Generator | Purpose |
+|---|---|
+| `foob g typescript-react-project -p <dir>` | Scaffold a new TypeScript React project |
+| `foob g typescript-remote-commands --manifest-url <url>` | Generate TS proxies for all backend commands |
+| `foob g typescript-react-command-form --manifest-url <url> --command-name <name>` | Generate a React form for one command |

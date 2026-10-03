@@ -1,0 +1,234 @@
+---
+title: "Types and Models: Foobara's Structured Type System"
+sidebarTitle: "Types & Models"
+description: "Explore Foobara's built-in type hierarchy, the Model class with its attributes DSL, automatic casting from hashes, and custom type registration."
+---
+
+Every value that flows through a Foobara command — inputs, outputs, entity attributes — belongs to a **type**. Types do more than validate; they actively cast incoming data into the right shape, apply transformers such as `:downcase`, and report structured errors when values cannot be processed. This page covers the built-in type hierarchy, working with models, and registering your own custom types.
+
+## Built-in Type Hierarchy
+
+Foobara ships with a complete set of primitive and structural types arranged in an inheritance tree. Understanding this hierarchy helps you choose the right type for each attribute and understand which processors are available.
+
+```
+duck
+├── atomic_duck
+│   ├── boolean
+│   ├── date
+│   ├── datetime
+│   ├── number
+│   │   ├── big_decimal
+│   │   ├── float
+│   │   └── integer
+│   ├── string
+│   │   └── email
+│   ├── symbol
+│   └── model
+│       └── detached_entity
+│           └── entity
+└── duckture
+    ├── array
+    │   └── tuple
+    └── associative_array
+        └── attributes
+```
+
+<CardGroup cols={2}>
+  <Card title="atomic_duck" icon="atom">
+    Single-value types. All scalar types (boolean, date, number, string, symbol, model) are atomic ducks. Foobara can cast similar representations — e.g., `"42"` → `42` for integers.
+  </Card>
+  <Card title="duckture" icon="layer-group">
+    Structural types that contain other types: arrays, associative arrays, and the `attributes` type that backs models.
+  </Card>
+  <Card title="model" icon="cube">
+    A named, structured type with declared attributes. See the [Models](#models) section below.
+  </Card>
+  <Card title="entity" icon="database">
+    A model with a primary key and CRUD persistence. See the [Entities](/concepts/entities) page.
+  </Card>
+</CardGroup>
+
+---
+
+## Using Types in the `inputs` DSL
+
+Types are referenced by symbol in the `inputs` block. Foobara resolves them in the current namespace, falling back through the domain to the global namespace.
+
+```ruby
+inputs do
+  # Scalar types
+  count        :integer,  :required
+  label        :string,   :required
+  ratio        :float
+  active       :boolean
+  started_on   :date
+  created_at   :datetime
+  status       :symbol,   one_of: %i[pending active archived]
+
+  # Structural types
+  tags         :array
+  metadata     :associative_array
+
+  # Model type (see below)
+  capybara     Capybara,  :required
+end
+```
+
+---
+
+## Models
+
+`Foobara::Model` is the base class for value objects with named, typed attributes. Unlike plain Ruby structs, models participate in the type system: they can be used as input or output types for commands, and Foobara will automatically cast hashes into model instances.
+
+### Defining a model
+
+```ruby
+class Capybara < Foobara::Model
+  attributes do
+    name     :string,  :required, "Official name"
+    nickname :string,             "Informal name for friends"
+    age      :integer, :required, "The number of times this capybara has gone around the sun"
+  end
+end
+```
+
+### Creating instances
+
+```ruby
+fumiko = Capybara.new(name: "Fumiko", nickname: "foo", age: 100)
+fumiko.name   # => "Fumiko"
+fumiko.age    # => 100
+```
+
+### Automatic casting from hashes
+
+When a command input or result is declared as a model type, Foobara automatically casts a plain hash into a model instance. This makes it easy to pass data across boundaries without constructing model objects explicitly.
+
+```ruby
+class IncrementAge < Foobara::Command
+  inputs do
+    capybara Capybara, :required
+  end
+
+  result Capybara
+
+  def execute
+    increment_age
+    capybara
+  end
+
+  def increment_age
+    capybara.age += 1
+  end
+end
+
+# Pass a hash — Foobara casts it to Capybara automatically
+basil = IncrementAge.run!(capybara: { name: "Basil", age: 300, nickname: "baz" })
+basil.age   # => 301
+```
+
+---
+
+## Attribute Processors
+
+Processors are the building blocks of attribute validation and transformation. They are declared inline in the `attributes` block alongside the type symbol.
+
+<Tabs>
+  <Tab title="Validators">
+    | Processor | Description |
+    |-----------|-------------|
+    | `:required` | Raises `missing_required_attribute` if the value is absent. |
+    | `:allow_nil` | Permits `nil` values even for types that normally forbid them. |
+    | `:allow_blank` | Permits blank strings and similar empty values. |
+    | `one_of: [...]` | Restricts the value to the given list. |
+    | `max: n` | For integers/floats: maximum value. For strings: maximum length. |
+    | `min: n` | For integers/floats: minimum value. For strings: minimum length. |
+    | `matches: /regex/` | Validates the value against a regular expression. |
+  </Tab>
+  <Tab title="Transformers">
+    | Processor | Description |
+    |-----------|-------------|
+    | `:downcase` | Converts a string attribute to lowercase before storing it. |
+  </Tab>
+</Tabs>
+
+```ruby
+# Pointless but illustrative — shows multiple processors combined
+inputs do
+  tier :integer, :required, one_of: [10, 20, 30], min: 10, max: 30,
+        "Must be one of the allowed tier values"
+end
+```
+
+---
+
+## Custom Types with `foobara_register_type`
+
+When an attribute declaration is used in many places, extract it into a **registered custom type**. Registered types appear by name in manifests, can be reused by symbol across the domain, and produce consistent error messages.
+
+### Inline type (not registered)
+
+```ruby
+class Judge < Foobara::Model
+  email_type = domain.foobara_type_from_declaration(
+    :string, :downcase, matches: /\A[^@]+@[^@]+\.[^@]+\z/
+  )
+
+  attributes do
+    email email_type, :required
+  end
+end
+```
+
+### Registered domain type (recommended)
+
+```ruby
+module FoobaraDemo
+  module CapybaraDivingCompetition
+    foobara_domain!
+
+    # Register the type on the domain — it becomes available by :email_address symbol
+    foobara_register_type :email_address,
+                          :string,
+                          :downcase,
+                          matches: /\A[^@]+@[^@]+\.[^@]+\z/
+
+    class Judge < Foobara::Model
+      attributes do
+        email          :email_address, :required
+        favorite_diver CapyCafe::Capybara, :allow_nil
+      end
+    end
+  end
+end
+```
+
+Now `:email_address` can be referenced by symbol anywhere inside `CapybaraDivingCompetition` or any domain that depends on it, and it appears by name in the manifest.
+
+```ruby
+judge = FoobaraDemo::CapybaraDivingCompetition::Judge.new(email: "ALICE@EXAMPLE.COM")
+judge.email   # => "alice@example.com"  (downcased by the transformer)
+
+judge2 = FoobaraDemo::CapybaraDivingCompetition::Judge.new(email: "not-an-email")
+judge2.valid?   # => false
+judge2.validation_errors.first.to_h
+# => {
+#   key: "data.email.does_not_match",
+#   path: [:email],
+#   category: :data,
+#   symbol: :does_not_match,
+#   message: "\"not-an-email\" did not match /\\A[^@]+@[^@]+\\.[^@]+\\z/",
+#   ...
+# }
+```
+
+<Accordion title="Type declarations in depth">
+  Foobara supports several forms of type declaration:
+
+  - **Symbol reference** — `:integer`, `:string`, `:email_address` — resolves a registered type by name.
+  - **Class reference** — `Capybara`, `Judge` — uses the model or entity class directly.
+  - **Hash declaration** — `{ type: :attributes, element_type_declarations: { ... } }` — strict structural form.
+  - **Block/proc declaration** — the `attributes do ... end` DSL inside `inputs` or `Foobara::Model.attributes`.
+
+  The framework desugarizes all forms to a canonical strict declaration internally.
+</Accordion>

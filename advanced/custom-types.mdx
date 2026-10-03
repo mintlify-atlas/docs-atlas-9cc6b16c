@@ -1,0 +1,245 @@
+---
+title: "Custom Types: Extending Foobara's Type System"
+sidebarTitle: "Custom Types"
+description: "Create reusable named types with processors, transformers, and validators — then reference them by symbol anywhere in the Foobara DSL."
+---
+
+Foobara's type system is built around the idea that a type is not just a shape validator but a composable pipeline of transformers, validators, and casters. Out of the box you get a rich hierarchy of built-in types. Beyond those, you can define your own types by layering processors on top of existing types — without writing a single new class. Registered types appear in manifests by name, making them as discoverable as commands and entities.
+
+## Built-in Type Hierarchy
+
+Foobara ships with a comprehensive set of primitive and structural types. The full tree looks like this:
+
+```
+duck
+├── atomic_duck
+│   ├── boolean
+│   ├── date
+│   ├── datetime
+│   ├── model
+│   │   └── detached_entity
+│   │       └── entity
+│   ├── number
+│   │   ├── big_decimal
+│   │   ├── float
+│   │   └── integer
+│   ├── string
+│   │   └── email      ← built-in example of an extended type
+│   └── symbol
+└── duckture
+    ├── array
+    │   └── tuple
+    └── associative_array
+        └── attributes
+```
+
+`duck` accepts any value. `atomic_duck` covers scalar values. `duckture` covers collection-like structures. Most types you will use in practice are under `atomic_duck` or `attributes`.
+
+<Note>
+  For a full reference of the built-in type hierarchy and their processors, see the [Types and Models](/concepts/types-and-models) concept guide.
+</Note>
+
+## Available Processors
+
+When you declare an attribute or build a custom type, you can attach processors after the base type symbol. Processors come in three flavours: transformers (modify the value), validators (reject invalid values with an error), and casters (convert from a compatible type).
+
+| Processor | Kind | Effect |
+|---|---|---|
+| `:required` | validator | Rejects `nil` |
+| `:allow_nil` | validator | Permits `nil` even when a value is expected |
+| `:downcase` | transformer | Calls `.downcase` on strings |
+| `matches: /regex/` | validator | Rejects strings that do not match the pattern |
+| `one_of: [...]` | validator | Rejects values not in the given list |
+| `max: n` | validator | Rejects numbers (or string/array lengths) above `n` |
+| `min: n` | validator | Rejects numbers (or string/array lengths) below `n` |
+
+Multiple processors can be stacked in a single declaration: `:string, :downcase, matches: /pattern/`.
+
+## Inline Anonymous Types
+
+The fastest way to attach processors is inline in an attribute declaration. The result is an anonymous type that is local to that attribute:
+
+```ruby
+class Judge < Foobara::Model
+  attributes do
+    email :string, :downcase, matches: /\A[^@]+@[^@]+\.[^@]+\z/
+    age   :integer, :required, min: 18, max: 120
+  end
+end
+```
+
+This works, but repeating the same processors everywhere is fragile. A single change to the regex requires a search-and-replace across every model that uses it.
+
+## Creating an Anonymous Reusable Type Object
+
+A step up from inline processors is `domain.foobara_type_from_declaration`, which builds a type object you can assign to a constant and reuse within a file:
+
+```ruby
+class Judge < Foobara::Model
+  email_address_type = domain.foobara_type_from_declaration(
+    :string,
+    :downcase,
+    matches: /\A[^@]+@[^@]+\.[^@]+\z/
+  )
+
+  attributes do
+    email email_address_type, :required
+    # email_address_type can now be reused in other attribute declarations too
+  end
+end
+```
+
+The type is still anonymous — it does not appear by name in the manifest.
+
+## Registering a Named Type
+
+For types you want to share across models, commands, and domains, register the type on the domain module using `foobara_register_type`. The first argument is the symbol name; the rest are the same processor chain you would use inline:
+
+```ruby
+module FoobaraDemo
+  module CapybaraDivingCompetition
+    foobara_domain!
+
+    depends_on CapyCafe
+
+    # Register an email_address type scoped to this domain
+    foobara_register_type :email_address,
+                          :string,
+                          :downcase,
+                          matches: /\A[^@]+@[^@]+\.[^@]+\z/
+
+    class Judge < Foobara::Model
+      attributes do
+        email          :email_address, :required   # reference by symbol
+        favorite_diver CapyCafe::Capybara, :allow_nil
+      end
+    end
+  end
+end
+```
+
+Once registered, `:email_address` is a first-class type reference within the domain. It can be used in:
+
+- Attribute declarations (as shown above)
+- Command `inputs` and `result` declarations
+- Other type declarations that extend it
+
+## Types in the Manifest
+
+Named types appear in the manifest under the `:type` key with their full scoped name. This means that remote services and code generators can discover your custom types and generate equivalent definitions in target languages:
+
+```ruby
+connector = Foobara::CommandConnector.new
+connector.connect(FoobaraDemo::CapybaraDivingCompetition)
+
+connector.foobara_manifest[:type].keys.grep(/email/)
+# => [:"FoobaraDemo::CapybaraDivingCompetition::email_address"]
+```
+
+## Validation in Action
+
+```ruby
+# Auto-downcasing happens on assignment
+judge = FoobaraDemo::CapybaraDivingCompetition::Judge.new(
+  email: "ASDF@EXAMPLE.COM"
+)
+judge.email
+# => "asdf@example.com"
+
+# Invalid email triggers a clear error
+bad_judge = FoobaraDemo::CapybaraDivingCompetition::Judge.new(
+  email: "not-an-email"
+)
+bad_judge.valid?
+# => false
+
+bad_judge.validation_errors.first.to_h
+# =>
+# { key:          "data.email.does_not_match",
+#   path:         [:email],
+#   category:     :data,
+#   symbol:       :does_not_match,
+#   message:      '"not-an-email" did not match /\A[^@]+@[^@]+\.[^@]+\z/',
+#   context:      { value: "not-an-email", regex: "..." },
+#   is_fatal:     false }
+```
+
+## Full Example: Email Address Type
+
+<Steps>
+  <Step title="Register the type on the domain">
+    ```ruby
+    module FoobaraDemo
+      module CapybaraDivingCompetition
+        foobara_domain!
+
+        foobara_register_type :email_address,
+                              :string,
+                              :downcase,
+                              matches: /\A[^@]+@[^@]+\.[^@]+\z/
+      end
+    end
+    ```
+  </Step>
+
+  <Step title="Use it in a model">
+    ```ruby
+    module FoobaraDemo
+      module CapybaraDivingCompetition
+        class Judge < Foobara::Model
+          attributes do
+            email          :email_address, :required
+            favorite_diver CapyCafe::Capybara, :allow_nil
+          end
+        end
+      end
+    end
+    ```
+  </Step>
+
+  <Step title="Use it in a command">
+    ```ruby
+    module FoobaraDemo
+      module CapybaraDivingCompetition
+        class RegisterJudge < Foobara::Command
+          inputs do
+            email          :email_address, :required
+            favorite_diver_id :integer
+          end
+
+          result Judge
+
+          def execute
+            create_judge
+
+            judge
+          end
+
+          attr_accessor :judge
+
+          def create_judge
+            self.judge = Judge.new(email:)
+          end
+        end
+      end
+    end
+    ```
+  </Step>
+
+  <Step title="Inspect in the manifest">
+    ```ruby
+    connector.foobara_manifest[:type][
+      :"FoobaraDemo::CapybaraDivingCompetition::email_address"
+    ]
+    # => { type: :string, processors: [...], domain_name: "CapybaraDivingCompetition", ... }
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  The `foob` CLI's `type` generator scaffolds the file for a new named type in the correct location within a generated project structure: `foob generate type --name email_address --domain FoobaraDemo::CapybaraDivingCompetition`.
+</Tip>
+
+## Advanced: Custom Types from Scratch
+
+The processor-stacking approach covers the majority of use cases, but Foobara also supports writing fully custom types — complete with bespoke casters, transformers, and validators — for situations where the built-in processor library is insufficient. This is an expert-level topic covered in the [YARD documentation](https://docs.foobara.org/all/).

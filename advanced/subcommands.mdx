@@ -1,0 +1,228 @@
+---
+title: "Subcommands: Composing Domain Operations"
+sidebarTitle: "Subcommands"
+description: "Invoke one Foobara command from inside another with full error propagation, dependency declarations, and unidirectional graph enforcement."
+---
+
+Domain operations rarely exist in isolation. A `PlaceOrder` command might need to validate inventory, charge a payment, and send a notification — each of which could be its own command. Foobara's **subcommands** mechanism lets you invoke one command from inside another while preserving error propagation, maintaining discoverable dependency declarations, and enforcing an unidirectional command dependency graph. The calling command stays focused on its own domain operation; the plumbing is handled by the framework.
+
+## Declaring a Dependency
+
+Before a command can invoke another as a subcommand, it must explicitly declare the dependency using the `depends_on` class method. This declaration does two things: it registers the subcommand's possible errors into the parent command's `possible_errors` list, and it is enforced at runtime to prevent accidental coupling.
+
+```ruby
+class Subtract < Foobara::Command
+  inputs do
+    operand1 :integer, :required
+    operand2 :integer, :required
+  end
+
+  result :integer
+
+  depends_on Add   # declare that Subtract may call Add as a subcommand
+
+  def execute
+    subtract_operands
+
+    difference
+  end
+
+  attr_accessor :difference
+
+  def subtract_operands
+    self.difference = run_subcommand!(Add, operand1:, operand2: -operand2)
+  end
+end
+```
+
+<Note>
+  If you call `run_subcommand!` on a class that was not declared with `depends_on`, Foobara raises `SubcommandNotRegistered` at runtime. This hard enforcement prevents invisible couplings from creeping into your dependency graph.
+</Note>
+
+## Invoking a Subcommand
+
+`#run_subcommand!(SubcommandClass, inputs_hash)` runs the subcommand, returns its result on success, and automatically appends any subcommand errors to the parent command's error collection on failure — causing the parent to fail as well.
+
+```ruby
+def subtract_operands
+  # If Add fails, its errors propagate to Subtract automatically
+  self.difference = run_subcommand!(Add, operand1:, operand2: -operand2)
+end
+```
+
+The second argument is the inputs hash for the subcommand. You can use Ruby's punning shorthand when the local variable names match the input names.
+
+## Error Propagation
+
+Subcommand errors bubble up to the parent command, where they are tagged with a runtime path that identifies the originating subcommand. This means callers of the parent command see a unified error response that includes errors from any depth of the subcommand chain:
+
+```ruby
+Subtract.run!(operand1: 5, operand2: 2)
+# => 3
+
+# Subcommand errors are incorporated into the parent outcome
+outcome = Subtract.run(operand1: "not a number", operand2: 2)
+outcome.success?      # => false
+outcome.errors_sentence
+# => "At operand1: Cannot cast \"not a number\" to an integer..."
+```
+
+## Inspecting Possible Errors
+
+`Command.possible_errors` includes errors from all declared subcommands, making the full error surface of a command discoverable through the manifest. Each subcommand error is prefixed with the subcommand's full symbol so the source is unambiguous:
+
+```ruby
+Subtract.possible_errors.map(&:key).map(&:to_s).sort
+# =>
+# ["add>data.cannot_cast",
+#  "add>data.missing_required_attribute",
+#  "add>data.operand1.cannot_cast",
+#  "add>data.operand1.missing_required_attribute",
+#  "add>data.operand2.cannot_cast",
+#  "add>data.operand2.missing_required_attribute",
+#  "add>data.unexpected_attributes",
+#  "data.cannot_cast",
+#  "data.missing_required_attribute",
+#  "data.operand1.cannot_cast",
+#  "data.operand1.missing_required_attribute",
+#  "data.operand2.cannot_cast",
+#  "data.operand2.missing_required_attribute",
+#  "data.unexpected_attributes"]
+```
+
+The `add>` prefix identifies errors that originated in the `Add` subcommand. Tooling — including the manifest, code generators, and remote imports — can introspect this full error surface.
+
+## Multi-Level Subcommand Chains
+
+Subcommands can themselves have subcommands. The `Divide` command below depends on `Subtract`, which in turn depends on `Add`. Errors from `Add` bubble through `Subtract` and into `Divide` with their full runtime path preserved:
+
+```ruby
+class Divide < Foobara::Command
+  inputs do
+    dividend :integer, :required
+    divisor  :integer, :required
+  end
+
+  result :integer
+
+  depends_on Subtract
+
+  possible_error :divide_by_zero, message: "Cannot divide by zero"
+
+  def execute
+    validate_divisor
+    initialize_quotient_to_zero
+    make_operands_positive_and_determine_if_result_is_negative
+
+    until dividend_less_than_divisor?
+      increment_quotient
+      subtract_divisor_from_dividend
+    end
+
+    negate_quotient if negative_result?
+
+    quotient
+  end
+
+  attr_accessor :negative_result, :quotient
+  attr_writer   :dividend, :divisor
+
+  def dividend = @dividend || super
+  def divisor  = @divisor  || super
+
+  def validate_divisor
+    add_runtime_error DivideByZeroError if divisor == 0
+  end
+
+  def initialize_quotient_to_zero
+    self.quotient = 0
+  end
+
+  def increment_quotient
+    self.quotient += 1
+  end
+
+  def subtract_divisor_from_dividend
+    self.dividend = run_subcommand!(Subtract, operand1: dividend, operand2: divisor)
+  end
+
+  def dividend_less_than_divisor?
+    dividend < divisor
+  end
+
+  def make_operands_positive_and_determine_if_result_is_negative
+    self.negative_result = false
+
+    if dividend < 0
+      self.dividend      = -dividend
+      self.negative_result = !negative_result
+    end
+
+    if divisor < 0
+      self.divisor       = -divisor
+      self.negative_result = !negative_result
+    end
+  end
+
+  def negate_quotient
+    self.quotient = -quotient
+  end
+
+  def negative_result?
+    negative_result
+  end
+end
+```
+
+## Subcommands with Domain Mappers
+
+When crossing domain boundaries, you can combine `#run_subcommand!` with a domain mapper using `#run_mapped_subcommand!`. This automatically locates the appropriate `DomainMapper`, translates the source object into the target command's inputs, and then runs the subcommand — all in one call. See [Domain Mappers](/advanced/domain-mappers) for the full explanation.
+
+```ruby
+def create_capybara
+  # Finds the DomainMapper that maps AnimalHouse::Animal -> CreateCapybara inputs,
+  # runs it as a subcommand, then runs CreateCapybara with the mapped inputs
+  self.capybara = run_mapped_subcommand!(CreateCapybara, animal)
+end
+```
+
+## Enforcing the Unidirectional Dependency Graph
+
+The `depends_on` declarations form a directed graph of command dependencies. Foobara can surface this graph through tooling so that circular dependencies and unexpected coupling become visible during development. Because the dependency graph is embedded in the manifest, graph visualisation tools can render it without any static analysis of source code.
+
+<Warning>
+  If `CannotAccessDomain` is raised at runtime, it means the calling command's domain does not have a `foobara_depends_on` relationship to the subcommand's domain. Add `foobara_depends_on SubDomain` to the parent domain module to resolve this.
+</Warning>
+
+## Quick Reference
+
+<Tabs>
+  <Tab title="Declaring dependencies">
+    ```ruby
+    class MyCommand < Foobara::Command
+      depends_on AnotherCommand
+      depends_on YetAnotherCommand, AndAnotherOne  # multiple at once
+    end
+    ```
+  </Tab>
+  <Tab title="Running a subcommand">
+    ```ruby
+    def some_step
+      self.result = run_subcommand!(AnotherCommand, input_a: value_a, input_b: value_b)
+    end
+    ```
+  </Tab>
+  <Tab title="Running a mapped subcommand">
+    ```ruby
+    def some_step
+      self.result = run_mapped_subcommand!(TargetCommand, source_object)
+    end
+    ```
+  </Tab>
+  <Tab title="Checking possible errors">
+    ```ruby
+    MyCommand.possible_errors.map(&:key).map(&:to_s).sort
+    # Includes errors from all declared subcommands, prefixed with their symbol
+    ```
+  </Tab>
+</Tabs>

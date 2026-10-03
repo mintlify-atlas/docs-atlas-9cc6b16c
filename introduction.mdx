@@ -1,0 +1,86 @@
+---
+title: "What Is Foobara? A Command-Centric Framework"
+sidebarTitle: "Introduction"
+description: "Foobara encapsulates domain operations in commands, generates integration code from manifest metadata, and keeps business logic portable across services."
+---
+
+Foobara is a Ruby framework built around one central idea: every meaningful operation in your system should live in a **command** — a plain Ruby class that declares its inputs, its result type, and its possible errors. Because commands are self-describing, Foobara can generate machine-readable metadata about your entire domain, which in turn lets connectors, remote-import tools, and code generators handle all the integration boilerplate for you automatically.
+
+## The Command-Centric Philosophy
+
+Most frameworks organize code around the technology stack — controllers, jobs, serializers, service objects scattered across layers. Foobara flips that around. Your domain operations are first-class citizens. Commands like `CreateCapybara` or `IncrementAge` are the public interface to your system. Everything else — HTTP routing, CLI flags, async queues, MCP tool schemas — is generated or wired up around those commands with zero hand-written glue code.
+
+This means engineers spend less time context-switching between mental models (HTTP verbs, Rails conventions, serialization rules) and more time working squarely within the problem domain.
+
+> *"Engineers can spend more time operating within a specific mental model at a time instead of multiple mental models all at once."* — Foobara README
+
+## Discoverability
+
+Discoverability is the second pillar. Every Foobara concept — commands, types, entities, errors, domain mappers — exposes a formal, machine-readable manifest via `.foobara_manifest`. This isn't just introspection sugar; it is the foundation for:
+
+- **Zero-glue connectors** — HTTP, CLI, MCP, Resque, and more can wrap any command without hand-written adapter code.
+- **Remote commands** — import commands from another running Foobara service and call them as if they were local; the interface is identical.
+- **Typed Ruby and TypeScript SDKs** — generated automatically from the manifest of a running backend.
+- **UI scaffolding** — generate React forms for any command with a single `foob` CLI call.
+- **Forward compatibility** — connectors you haven't written yet (or that don't exist yet) can be added later without touching domain code.
+
+## Key Benefits at a Glance
+
+<CardGroup cols={2}>
+  <Card title="Zero-Glue Connectors" icon="plug">
+    Connect any command to HTTP, CLI, MCP, async queues, or schedulers by calling `connector.connect(MyCommand)` — no adapter code required.
+  </Card>
+  <Card title="Remote Commands" icon="network-wired">
+    Import commands from another Foobara service over HTTP. The remote command has the same Ruby interface as the local one, so rearchitecting never forces a refactor.
+  </Card>
+  <Card title="Rich Type System" icon="layer-group">
+    Built-in types (`integer`, `string`, `date`, `boolean`, `email`, and more) plus models, entities with CRUD drivers, and fully composable custom types with validators and transformers.
+  </Card>
+  <Card title="Domain Mappers" icon="arrows-left-right">
+    Map a concept from one domain to another in a dedicated class, keeping each command's code free of foreign mental models.
+  </Card>
+  <Card title="Code Generators" icon="wand-magic-sparkles">
+    The `foob` CLI scaffolds Ruby projects, TypeScript/React frontends, remote-import files, and command forms straight from manifest metadata.
+  </Card>
+  <Card title="Organizations & Domains" icon="sitemap">
+    Group commands and types into Domains, then nest Domains inside Organizations. Dependencies between domains are explicit and unidirectional.
+  </Card>
+</CardGroup>
+
+## Standalone Framework vs. Service-Objects Layer
+
+Foobara works equally well in two modes:
+
+**Standalone framework** — Start a new project with `foob generate ruby-project` and build everything inside Foobara's conventions from day one. You get a structured directory layout, a gemspec, a test harness, and all the connectors wired up automatically.
+
+**Service-objects layer** — Add `gem "foobara"` to an existing Rails or Rack app and introduce commands one at a time alongside your existing code. Foobara doesn't require you to rewire your router or replace your ORM; it sits alongside existing code and you can opt into connectors and remote imports whenever you are ready.
+
+In both cases the interface to your commands never changes, so you can start small and graduate to full framework usage without rewriting calling code.
+
+## Monorepo Structure
+
+The `foobara` gem is itself a monorepo containing several focused sub-projects, each of which can be understood independently:
+
+| Project | Purpose |
+|---|---|
+| `projects/command` | Core command lifecycle, inputs DSL, outcomes, error handling |
+| `projects/typesystem` | Type declarations, built-in types, validators, transformers |
+| `projects/entities` | Entity persistence layer, CRUD driver abstraction |
+| `projects/manifest` | Metadata manifest generation and querying |
+| `projects/domain_mapper` | Cross-domain concept mapping |
+| `projects/command_connectors` | Base connector infrastructure |
+| `projects/model_plumbing` | Model base class and attribute handling |
+| `projects/big_decimal` | BigDecimal type support |
+
+Connector gems (Rack, CLI, MCP, Resque, etc.) live in separate repositories under the [foobara GitHub organization](https://github.com/orgs/foobara/repositories).
+
+## Where to Go Next
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="gem" href="/installation">
+    Add Foobara to a new or existing Ruby project, install the `foob` CLI, and learn about optional connector gems.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build a working `CreateCapybara` command, expose it over the CLI and HTTP, and see Foobara's connectors in action.
+  </Card>
+</CardGroup>
