@@ -38,7 +38,7 @@ chmod u+x capy-cafe
 
 Running the script with no arguments prints a list of all connected commands along with their descriptions:
 
-```
+```text
 $ ./capy-cafe
 Usage: capy-cafe [GLOBAL_OPTIONS] [ACTION] [COMMAND_OR_TYPE] [COMMAND_INPUTS]
 
@@ -55,7 +55,7 @@ The descriptions come from the `description` call inside each command class, so 
 
 Pass `help CommandName` to see the inputs for a specific command:
 
-```
+```text
 $ ./capy-cafe help FindCapybara
 Usage: capy-cafe [GLOBAL_OPTIONS] FindCapybara [COMMAND_INPUTS]
 
@@ -66,7 +66,7 @@ Command inputs:
  -i, --id ID                      Required
 ```
 
-```
+```text
 $ ./capy-cafe help IncrementAge
 Usage: capy-cafe [GLOBAL_OPTIONS] IncrementAge [COMMAND_INPUTS]
 
@@ -83,7 +83,7 @@ The connector automatically abbreviates each flag name with a short single-lette
 
 Pass the command name followed by `--input-name value` flags:
 
-```
+```text
 $ ./capy-cafe FindCapybara --id 3
 id: 3,
 name: "Basil",

@@ -50,7 +50,7 @@ command_connector = Foobara::CommandConnectors::Http::Rack.new(
 command_connector.connect(DeleteCapybara, allowed_rule: :admin)
 ```
 
-When `requires_allowed_rule: true` is set, every connected command must have an explicit `allowed_rule` or the connector will raise at connect time, preventing accidental exposure of sensitive commands.
+When `requires_allowed_rule: true` is set, every connected command must have an explicit `allowed_rule` or the connector will raise a `NoAllowedRuleGivenError` when that command is first invoked, preventing accidental exposure of sensitive commands.
 
 ## Available connectors
 

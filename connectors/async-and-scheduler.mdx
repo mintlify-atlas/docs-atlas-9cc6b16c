@@ -56,7 +56,7 @@ Foobara's async and scheduler connectors let you push commands onto background q
 
     Enqueue a job by calling the async variant:
 
-    ```
+    ```text
     $ ./capy-cafe FindCapybara --id 1 | grep age
     age: 100
 
@@ -79,14 +79,14 @@ Foobara's async and scheduler connectors let you push commands onto background q
 
     Once the worker runs, the job is processed:
 
-    ```
+    ```text
     *** got: (Job{general} | Foobara::CommandConnectors::ResqueConnector::CommandJob | [{"command_name"=>"IncrementAge", "inputs"=>{"capybara"=>"1"}}])
     *** done: (Job{general} | Foobara::CommandConnectors::ResqueConnector::CommandJob | [{"command_name"=>"IncrementAge", "inputs"=>{"capybara"=>"1"}}])
     ```
 
     Now check the age again:
 
-    ```
+    ```text
     $ ./capy-cafe FindCapybara --id 1 | grep age
     age: 101
     ```
@@ -139,7 +139,7 @@ Foobara's async and scheduler connectors let you push commands onto background q
 
     When you start the combined worker and scheduler process, you see the scheduler initialize and then fire jobs at the configured interval:
 
-    ```
+    ```text
     resque-scheduler: [INFO] 2024-12-12T14:47:41-08:00: Starting
     resque-scheduler: [DEBUG] 2024-12-12T14:47:41-08:00: Setting procline "resque-scheduler-4.10.2: Starting"
     resque-scheduler: [DEBUG] 2024-12-12T14:47:41-08:00: Setting procline "resque-scheduler-4.10.2: Schedules Loaded"
@@ -147,7 +147,7 @@ Foobara's async and scheduler connectors let you push commands onto background q
 
     Every 5 seconds the scheduler queues the job and the worker picks it up:
 
-    ```
+    ```text
     resque-scheduler: [INFO] 2024-12-12T14:47:45-08:00: queueing Foobara::CommandConnectors::ResqueConnector::CommandJob (IncrementAge)
     *** got: (Job{general} | Foobara::CommandConnectors::ResqueConnector::CommandJob | [{"command_name"=>"IncrementAge", "inputs"=>{"capybara"=>1}}])
     *** done: (Job{general} | Foobara::CommandConnectors::ResqueConnector::CommandJob | [{"command_name"=>"IncrementAge", "inputs"=>{"capybara"=>1}}])

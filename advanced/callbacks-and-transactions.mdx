@@ -1,5 +1,5 @@
 ---
-title: "Callbacks and Transactions in Foobara Commands"
+title: "Callbacks and Transactions in Foobara: Lifecycle Hooks"
 sidebarTitle: "Callbacks & Transactions"
 description: "Hook into command lifecycle transitions with before/after/around callbacks and manage entity persistence with automatic transaction commit and rollback."
 ---
@@ -140,13 +140,18 @@ end
 
 ## Removing Callbacks
 
-In test suites you sometimes need to start with a clean slate:
+In test suites you sometimes need to start with a clean slate. `remove_all_callbacks` is a class method that clears the global `Command::StateMachine` callback registry as well as any instance-level registry defined on the calling class:
 
 ```ruby
 after do
+  # Removes ALL registered callbacks across all commands, not just MyCommand's
   MyCommand.remove_all_callbacks
 end
 ```
+
+<Note>
+  `remove_all_callbacks` is a broad reset — it clears callbacks registered on the state machine globally, not just those registered for a single command class. Call it only when you want a fully clean slate, such as between test examples.
+</Note>
 
 ## Transactions in Commands
 
@@ -198,16 +203,10 @@ end
 # Transaction commits (or rolls back if an exception was raised)
 ```
 
-You can also open a transaction with an explicit rollback for read-only test fixtures:
-
-```ruby
-Capybara.transaction(mode: :read_only) do
-  # No writes will be committed
-end
-```
+The `transaction` method accepts an optional `mode:` keyword argument. Supported modes are `:use_existing` (reuse any already-open transaction), `:open_nested` (open a nested transaction that flushes/reverts rather than commits/rolls back), and `:open_new` (always open a fresh transaction, even if one is already open). Passing `nil` (the default) raises an error if a transaction is already open, which helps catch accidental nesting.
 
 <Tip>
-  In RSpec, consider wrapping each example in a transaction in your `spec_helper.rb` to get automatic rollback after every test without needing a database-backed transaction cleaner.
+  In RSpec, consider wrapping each example in a transaction in your `spec_helper.rb` and using the `:open_nested` mode so that each test's entity writes are automatically reverted after the example runs.
 </Tip>
 
 ## Entity Change Tracking

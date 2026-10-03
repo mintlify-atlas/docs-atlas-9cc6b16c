@@ -1,7 +1,7 @@
 ---
 title: "TypeScript Integration via Manifest-Driven Code Generation"
 sidebarTitle: "TypeScript"
-description: "Generate TypeScript types, command proxies, error classes, and React forms directly from a live Foobara backend manifest."
+description: "Generate TypeScript types, command proxies, error classes, and React form components directly from a live Foobara backend manifest with the foob CLI."
 ---
 
 Because every Foobara backend exposes a machine-readable manifest at `/manifest`, the `foob` CLI can inspect a running Ruby server and generate a fully-typed TypeScript SDK — including command proxies, domain types, error classes, and React form components — without you writing a single line of glue code by hand. The generated TypeScript remote commands share the same interface as their Ruby counterparts, so calling code never needs to change when you move domain logic between systems.
@@ -89,28 +89,11 @@ This output is intentionally a starting point — you can customise it as needed
 
 ### Use Generated Code in Your React App
 
-Import the generated command proxy and form component into your application:
+With generated proxies and form components in place, import and use them in your application. The generated command proxies share the same mental model as their Ruby counterparts — commands with typed inputs, a result, and typed possible errors — and the generated form components are ready-to-customise starting points wired to those proxies.
 
-```typescript
-import { CreateCapybara } from "./generated/commands/create_capybara";
-import { CreateCapybaraForm } from "./generated/forms/CreateCapybaraForm";
-
-// Call a command directly from TypeScript — same interface as the Ruby command
-const outcome = await CreateCapybara.run({ name: "Fumiko", age: 100 });
-
-if (outcome.success) {
-  console.log(outcome.result);
-} else {
-  console.error(outcome.errorsSentence);
-}
-```
-
-```tsx
-// Or render the auto-generated form in a component
-export function NewCapybaraPage() {
-  return <CreateCapybaraForm onSuccess={(capybara) => console.log(capybara)} />;
-}
-```
+<Note>
+  The exact file paths, import names, and TypeScript API surface depend on the output of the generators for your specific backend. Inspect the generated files in your project directory to see the actual interface.
+</Note>
 
 ### Re-generate When the Backend Changes
 

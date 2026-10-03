@@ -1,5 +1,5 @@
 ---
-title: "Custom Types: Extending Foobara's Type System"
+title: "Custom Types: Extending Foobara's Type System in Ruby"
 sidebarTitle: "Custom Types"
 description: "Create reusable named types with processors, transformers, and validators — then reference them by symbol anywhere in the Foobara DSL."
 ---
@@ -46,12 +46,12 @@ When you declare an attribute or build a custom type, you can attach processors 
 | Processor | Kind | Effect |
 |---|---|---|
 | `:required` | validator | Rejects `nil` |
-| `:allow_nil` | validator | Permits `nil` even when a value is expected |
+| `:allow_nil` | caster | Permits `nil` even when a value is expected |
 | `:downcase` | transformer | Calls `.downcase` on strings |
 | `matches: /regex/` | validator | Rejects strings that do not match the pattern |
 | `one_of: [...]` | validator | Rejects values not in the given list |
-| `max: n` | validator | Rejects numbers (or string/array lengths) above `n` |
-| `min: n` | validator | Rejects numbers (or string/array lengths) below `n` |
+| `max: n` | validator | Rejects numbers above `n` |
+| `min: n` | validator | Rejects numbers below `n` |
 
 Multiple processors can be stacked in a single declaration: `:string, :downcase, matches: /pattern/`.
 

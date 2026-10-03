@@ -232,6 +232,37 @@ IntegerMath.foobara_command_classes
 # => [IntegerMath::Add]
 ```
 
+### Write an IncrementAge command
+
+Commands work equally well with entity inputs — Foobara accepts either a full entity instance or a bare primary key and resolves it automatically:
+
+```ruby
+class IncrementAge < Foobara::Command
+  inputs do
+    capybara Capybara, :required
+  end
+
+  result Capybara
+
+  def execute
+    increment_age
+
+    capybara
+  end
+
+  def increment_age
+    capybara.age += 1
+  end
+end
+```
+
+Passing a primary key integer instead of a full object works transparently:
+
+```ruby
+basil = IncrementAge.run!(capybara: 3)
+basil.age   # => 301
+```
+
 ### Connect a CLI connector
 
 Install the shell connector gem if you haven't already:
@@ -248,6 +279,7 @@ require "foobara/sh_cli_connector"
 command_connector = Foobara::CommandConnectors::ShCliConnector.new
 
 command_connector.connect(CreateCapybara)
+command_connector.connect(IncrementAge)
 command_connector.connect(FindCapybara)
 
 command_connector.run(ARGV)
@@ -262,6 +294,7 @@ Usage: capy-cafe [GLOBAL_OPTIONS] [ACTION] [COMMAND_OR_TYPE] [COMMAND_INPUTS]
 Available commands:
 
   CreateCapybara   Just creates a capybara!
+  IncrementAge
   FindCapybara
 ```
 
@@ -305,6 +338,7 @@ require "rackup/server"
 command_connector = Foobara::CommandConnectors::Http::Rack.new
 
 command_connector.connect(CreateCapybara)
+command_connector.connect(IncrementAge)
 command_connector.connect(FindCapybara)
 
 Rackup::Server.start(app: command_connector)
@@ -318,18 +352,20 @@ Puma starting in single mode...
 * Listening on http://0.0.0.0:9292
 ```
 
-Hit the endpoints with `curl`:
+Hit the endpoints with `curl`. Inputs are passed as query-string parameters:
 
 ```bash
 # Find a capybara by ID
 $ curl "http://localhost:9292/run/FindCapybara?id=1"
 {"name":"Fumiko","nickname":"foo","age":100,"id":1}
 
-# Create a new capybara
-$ curl -X POST "http://localhost:9292/run/CreateCapybara" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Taro","nickname":"tar","age":50}'
-{"name":"Taro","nickname":"tar","age":50,"id":4}
+# Increment Fumiko's age (pass the entity's primary key as the input value)
+$ curl "http://localhost:9292/run/IncrementAge?capybara=1"
+{"id":1,"name":"Fumiko","nickname":"foo","age":101}
+
+# Confirm the age was persisted
+$ curl "http://localhost:9292/run/FindCapybara?id=1"
+{"name":"Fumiko","nickname":"foo","age":101,"id":1}
 ```
 
 Foobara also exposes a human-readable help endpoint and a machine-readable manifest endpoint automatically:
@@ -349,16 +385,16 @@ curl http://localhost:9292/manifest
 You now have a fully working Foobara application with persistence, a CLI interface, and an HTTP API — all driven from the same two command classes. From here you can explore:
 
 <CardGroup cols={2}>
-  <Card title="Subcommands" icon="diagram-project">
+  <Card title="Subcommands" icon="diagram-project" href="/advanced/subcommands">
     Call one command from another with `run_subcommand!` and let Foobara propagate errors up the call chain automatically.
   </Card>
-  <Card title="Custom Errors" icon="triangle-exclamation">
+  <Card title="Custom Errors" icon="triangle-exclamation" href="/concepts/errors">
     Declare typed input errors with `possible_input_error` and runtime errors with `possible_error` so tooling and callers know exactly what can go wrong.
   </Card>
-  <Card title="Domain Mappers" icon="arrows-left-right">
+  <Card title="Domain Mappers" icon="arrows-left-right" href="/advanced/domain-mappers">
     Write a `Foobara::DomainMapper` to translate concepts between domains and call it with `run_mapped_subcommand!` inside a command.
   </Card>
-  <Card title="Remote Commands" icon="cloud">
+  <Card title="Remote Commands" icon="cloud" href="/advanced/remote-commands">
     Import commands from a running Foobara service with `foobara-remote-imports` and call them as if they were local — same interface, zero refactoring.
   </Card>
 </CardGroup>

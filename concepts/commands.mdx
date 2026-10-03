@@ -62,9 +62,6 @@ Foobara validates and casts inputs before `#execute` is ever called, so your log
   <Card title=":allow_nil" icon="circle-dashed">
     Permits `nil` even when the type normally forbids it.
   </Card>
-  <Card title=":allow_blank" icon="text-slash">
-    Permits empty strings and similar blank values.
-  </Card>
   <Card title="one_of:" icon="list-check">
     Restricts values to a specific enumeration.
   </Card>
@@ -154,7 +151,7 @@ Foobara provides three ways to run a command, each suited to a different context
     ```
   </Tab>
   <Tab title=".run! (bang)">
-    Returns the result directly, or raises `Foobara::Outcome::UnsuccessfulOutcomeError` on failure. Ideal for scripts, tests, and trusted internal callers.
+    Returns the result directly, or raises the underlying error on failure (a `Foobara::Error` for single failures, or `Foobara::Outcome::UnsuccessfulOutcomeError` when there are multiple errors). Ideal for scripts, tests, and trusted internal callers.
 
     ```ruby
     Add.run!(operand1: 2, operand2: 5) # => 7
@@ -176,8 +173,8 @@ Every `#run` call returns a `Foobara::Outcome`. The outcome encapsulates success
   The value returned by `#execute`, cast to the declared result type. `nil` on failure.
 </ParamField>
 
-<ParamField body="errors" type="Array">
-  An array of `Foobara::Error` objects describing what went wrong.
+<ParamField body="errors" type="ErrorCollection">
+  An `ErrorCollection` of `Foobara::Error` objects describing what went wrong. Supports `each`, `map`, `first`, and other Enumerable methods.
 </ParamField>
 
 <ParamField body="errors_sentence" type="String">
@@ -186,6 +183,10 @@ Every `#run` call returns a `Foobara::Outcome`. The outcome encapsulates success
 
 <ParamField body="errors_hash" type="Hash">
   A keyed map of every error, with full metadata (key, path, category, message, context). Used by connectors and clients.
+</ParamField>
+
+<ParamField body="result!" type="Object">
+  Returns the result directly, or raises the first error (or `Foobara::Outcome::UnsuccessfulOutcomeError` for multiple errors) when the outcome is unsuccessful. Equivalent to calling `run.result!` — used internally by `.run!`.
 </ParamField>
 
 ### Error output examples
@@ -240,8 +241,6 @@ The following is the full `Add` command from the README, usable as a standalone 
 require "foobara"
 
 class Add < Foobara::Command
-  description "Adds two integers together."
-
   inputs do
     operand1 :integer, :required
     operand2 :integer, :required
